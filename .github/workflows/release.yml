@@ -1,0 +1,82 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Verify tag is on main branch
+      run: |
+        # Check if the tag points to a commit that's on main
+        TAG_COMMIT=$(git rev-list -n 1 ${{ github.ref_name }})
+        if ! git merge-base --is-ancestor $TAG_COMMIT origin/main; then
+          echo "❌ Tag ${{ github.ref_name }} is not on main branch"
+          exit 1
+        fi
+        echo "✅ Tag ${{ github.ref_name }} is on main branch"
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.23'
+    
+    - name: Run full test suite
+      run: |
+        echo "Running comprehensive tests for release..."
+        go test -v -race ./...
+    
+    - name: Generate changelog
+      id: changelog
+      run: |
+        # Get the tag name
+        TAG_NAME=${GITHUB_REF#refs/tags/}
+        echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+        
+        # Generate changelog from git commits
+        PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+        if [ -z "$PREVIOUS_TAG" ]; then
+          CHANGELOG=$(git log --pretty=format:"- %s" --reverse)
+        else
+          CHANGELOG=$(git log --pretty=format:"- %s" --reverse $PREVIOUS_TAG..HEAD)
+        fi
+        
+        # Save changelog to file and output
+        {
+          echo "## What's Changed"
+          echo "$CHANGELOG"
+          echo ""
+          echo "**Full Changelog**: https://github.com/${{ github.repository }}/commits/${{ steps.changelog.outputs.tag_name }}"
+        } > changelog.md
+        
+        # Save to output for use in release
+        {
+          echo "changelog<<EOF"
+          cat changelog.md
+          echo "EOF"
+        } >> $GITHUB_OUTPUT
+    
+    - name: Create Release
+      run: |
+        gh release create ${{ steps.changelog.outputs.tag_name }} \
+          --title "Release ${{ steps.changelog.outputs.tag_name }}" \
+          --notes-file changelog.md \
+          $(if [[ "${{ steps.changelog.outputs.tag_name }}" == *"-"* ]]; then echo "--prerelease"; fi)
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Notify on success
+      if: success()
+      run: |
+        echo "✅ Release ${{ steps.changelog.outputs.tag_name }} created successfully!"
+        echo "🚀 Go modules users can now use: go get github.com/${{ github.repository }}@${{ steps.changelog.outputs.tag_name }}" 
