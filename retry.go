@@ -49,7 +49,7 @@ func (c *Connection[T]) WithRetry(config *RetryConfig) *RetryableConnection[T] {
 // WithRetryableTransaction executes the given function within a database transaction with retry logic
 func (rc *RetryableConnection[T]) WithRetryableTransaction(ctx context.Context, fn TransactionFunc[T]) error {
 	return rc.retryOperation(ctx, func(ctx context.Context) error {
-		return rc.Connection.WithTransaction(ctx, fn)
+		return rc.WithTransaction(ctx, fn)
 	})
 }
 

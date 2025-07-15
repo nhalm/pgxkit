@@ -186,6 +186,6 @@ type RetryableReadWriteConnection[T Querier] struct {
 // WithRetryableTransaction executes the given function within a database transaction with retry logic
 func (rrc *RetryableReadWriteConnection[T]) WithRetryableTransaction(ctx context.Context, fn TransactionFunc[T]) error {
 	return retryOperation(ctx, rrc.retryConfig, func(ctx context.Context) error {
-		return rrc.ReadWriteConnection.WithTransaction(ctx, fn)
+		return rrc.WithTransaction(ctx, fn)
 	})
 }
