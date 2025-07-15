@@ -1,4 +1,4 @@
-// Package dbutil provides database connection utilities and testing infrastructure
+// Package pgxkit provides database connection utilities and testing infrastructure
 // for applications using PostgreSQL with pgx and sqlc.
 //
 // This package is designed specifically for sqlc users who want:
@@ -23,7 +23,7 @@
 //
 //	queries := conn.Queries()
 //	users, err := queries.GetAllUsers(ctx)
-package dbutil
+package pgxkit
 
 import (
 	"context"

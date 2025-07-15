@@ -1,4 +1,4 @@
-module github.com/nhalm/dbutil
+module github.com/nhalm/pgxkit
 
 go 1.23.0
 

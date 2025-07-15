@@ -11,7 +11,7 @@ import (
     "context"
     "log"
     
-    "github.com/nhalm/dbutil"
+    "github.com/nhalm/pgxkit"
     "your-project/internal/repository/sqlc" // Your sqlc-generated package
 )
 
@@ -19,7 +19,7 @@ func main() {
     ctx := context.Background()
     
     // Create a connection with your sqlc queries
-    conn, err := dbutil.NewConnection(ctx, "", sqlc.New)
+    conn, err := pgxkit.NewConnection(ctx, "", sqlc.New)
     if err != nil {
         log.Fatal(err)
     }
@@ -46,7 +46,7 @@ import (
     "log"
     "time"
     
-    "github.com/nhalm/dbutil"
+    "github.com/nhalm/pgxkit"
     "your-project/internal/repository/sqlc"
 )
 
@@ -54,7 +54,7 @@ func main() {
     ctx := context.Background()
     
     // Configure connection settings
-    config := &dbutil.Config{
+    config := &pgxkit.Config{
         MaxConns:        20,
         MinConns:        5,
         MaxConnLifetime: 1 * time.Hour,
@@ -62,7 +62,7 @@ func main() {
     }
     
     // Create connection with custom config
-    conn, err := dbutil.NewConnectionWithConfig(ctx, "", sqlc.New, config)
+    conn, err := pgxkit.NewConnectionWithConfig(ctx, "", sqlc.New, config)
     if err != nil {
         log.Fatal(err)
     }
@@ -83,14 +83,14 @@ import (
     "context"
     "log"
     
-    "github.com/nhalm/dbutil"
+    "github.com/nhalm/pgxkit"
     "your-project/internal/repository/sqlc"
 )
 
 func main() {
     ctx := context.Background()
     
-    conn, err := dbutil.NewConnection(ctx, "", sqlc.New)
+    conn, err := pgxkit.NewConnection(ctx, "", sqlc.New)
     if err != nil {
         log.Fatal(err)
     }
@@ -128,16 +128,16 @@ package main
 import (
     "testing"
     
-    "github.com/nhalm/dbutil"
+    "github.com/nhalm/pgxkit"
     "your-project/internal/repository/sqlc"
 )
 
 func TestUserOperations(t *testing.T) {
     // Get shared test connection
-    conn := dbutil.RequireTestDB(t, sqlc.New)
+    conn := pgxkit.RequireTestDB(t, sqlc.New)
     
     // Clean up test data
-    dbutil.CleanupTestData(conn,
+    pgxkit.CleanupTestData(conn,
         "DELETE FROM users WHERE email LIKE 'test_%'",
         "DELETE FROM user_profiles WHERE user_id IS NULL",
     )
@@ -171,24 +171,24 @@ import (
     "log"
     
     "github.com/jackc/pgx/v5"
-    "github.com/nhalm/dbutil"
+    "github.com/nhalm/pgxkit"
     "your-project/internal/repository/sqlc"
 )
 
-func getUserByID(ctx context.Context, conn *dbutil.Connection[*sqlc.Queries], id int64) (*sqlc.User, error) {
+func getUserByID(ctx context.Context, conn *pgxkit.Connection[*sqlc.Queries], id int64) (*sqlc.User, error) {
     user, err := conn.Queries().GetUserByID(ctx, id)
     if err != nil {
         if errors.Is(err, pgx.ErrNoRows) {
-            return nil, dbutil.NewNotFoundError("User", id)
+            return nil, pgxkit.NewNotFoundError("User", id)
         }
-        return nil, dbutil.NewDatabaseError("User", "query", err)
+        return nil, pgxkit.NewDatabaseError("User", "query", err)
     }
     return &user, nil
 }
 
 func main() {
     ctx := context.Background()
-    conn, err := dbutil.NewConnection(ctx, "", sqlc.New)
+    conn, err := pgxkit.NewConnection(ctx, "", sqlc.New)
     if err != nil {
         log.Fatal(err)
     }
@@ -196,7 +196,7 @@ func main() {
     
     user, err := getUserByID(ctx, conn, 123)
     if err != nil {
-        var notFoundErr *dbutil.NotFoundError
+        var notFoundErr *pgxkit.NotFoundError
         if errors.As(err, &notFoundErr) {
             log.Printf("User not found: %v", notFoundErr)
             return
@@ -217,7 +217,7 @@ import (
     "context"
     "log"
     
-    "github.com/nhalm/dbutil"
+    "github.com/nhalm/pgxkit"
     "your-project/internal/repository/sqlc"
 )
 
@@ -225,7 +225,7 @@ func main() {
     ctx := context.Background()
     
     // Connection for 'users' schema
-    usersConn, err := dbutil.NewConnectionWithConfig(ctx, "", sqlc.New, &dbutil.Config{
+    usersConn, err := pgxkit.NewConnectionWithConfig(ctx, "", sqlc.New, &pgxkit.Config{
         SearchPath: "users",
     })
     if err != nil {
@@ -234,7 +234,7 @@ func main() {
     defer usersConn.Close()
     
     // Connection for 'orders' schema  
-    ordersConn, err := dbutil.NewConnectionWithConfig(ctx, "", sqlc.New, &dbutil.Config{
+    ordersConn, err := pgxkit.NewConnectionWithConfig(ctx, "", sqlc.New, &pgxkit.Config{
         SearchPath: "orders",
     })
     if err != nil {
@@ -259,13 +259,13 @@ import (
     "context"
     "log"
     
-    "github.com/nhalm/dbutil"
+    "github.com/nhalm/pgxkit"
     "your-project/internal/repository/sqlc"
 )
 
 func main() {
     ctx := context.Background()
-    conn, err := dbutil.NewConnection(ctx, "", sqlc.New)
+    conn, err := pgxkit.NewConnection(ctx, "", sqlc.New)
     if err != nil {
         log.Fatal(err)
     }
@@ -277,9 +277,9 @@ func main() {
     var score *float64 = nil
     
     // Convert Go types to pgx types
-    pgxName := dbutil.ToPgxText(name)           // nil becomes Valid: false
-    pgxAge := dbutil.ToPgxInt4FromInt(&age)     // 25 becomes Valid: true
-    pgxScore := dbutil.ToPgxNumericFromFloat64Ptr(score) // nil becomes Valid: false
+    pgxName := pgxkit.ToPgxText(name)           // nil becomes Valid: false
+    pgxAge := pgxkit.ToPgxInt4FromInt(&age)     // 25 becomes Valid: true
+    pgxScore := pgxkit.ToPgxNumericFromFloat64Ptr(score) // nil becomes Valid: false
     
     // Create user with converted types
     user, err := conn.Queries().CreateUserWithOptionalFields(ctx, sqlc.CreateUserWithOptionalFieldsParams{
@@ -292,9 +292,9 @@ func main() {
     }
     
     // Convert back to Go types
-    userName := dbutil.FromPgxText(user.Name)        // Returns *string
-    userAge := dbutil.FromPgxInt4(user.Age)          // Returns *int  
-    userScore := dbutil.FromPgxNumericPtr(user.Score) // Returns *float64
+    userName := pgxkit.FromPgxText(user.Name)        // Returns *string
+    userAge := pgxkit.FromPgxInt4(user.Age)          // Returns *int  
+    userScore := pgxkit.FromPgxNumericPtr(user.Score) // Returns *float64
     
     log.Printf("Created user: name=%v, age=%v, score=%v", userName, userAge, userScore)
 }
@@ -310,7 +310,7 @@ import (
     "log"
     
     "github.com/jackc/pgx/v5"
-    "github.com/nhalm/dbutil"
+    "github.com/nhalm/pgxkit"
     "your-project/internal/repository/sqlc"
 )
 
@@ -318,15 +318,15 @@ func main() {
     ctx := context.Background()
     
     // Method 1: Create connection with pre-built hooks
-    logger := dbutil.NewDefaultLogger(dbutil.LogLevelInfo)
-    conn, err := dbutil.NewConnectionWithLoggingHooks(ctx, "", sqlc.New, logger)
+    logger := pgxkit.NewDefaultLogger(pgxkit.LogLevelInfo)
+    conn, err := pgxkit.NewConnectionWithLoggingHooks(ctx, "", sqlc.New, logger)
     if err != nil {
         log.Fatal(err)
     }
     defer conn.Close()
     
     // Method 2: Create custom hooks and add them
-    hooks := dbutil.NewConnectionHooks()
+    hooks := pgxkit.NewConnectionHooks()
     
     // Add connection lifecycle hooks
     hooks.AddOnConnect(func(conn *pgx.Conn) error {
@@ -344,30 +344,30 @@ func main() {
     conn = conn.WithHooks(hooks)
     
     // Method 4: Create connection with hooks in config
-    config := &dbutil.Config{
+    config := &pgxkit.Config{
         MaxConns: 10,
         Hooks:    hooks,
     }
     
-    conn2, err := dbutil.NewConnectionWithConfig(ctx, "", sqlc.New, config)
+    conn2, err := pgxkit.NewConnectionWithConfig(ctx, "", sqlc.New, config)
     if err != nil {
         log.Fatal(err)
     }
     defer conn2.Close()
     
     // Use pre-built hooks
-    validationHooks := dbutil.ValidationHook()
-    setupHooks := dbutil.SetupHook("SET timezone = 'UTC'")
+    validationHooks := pgxkit.ValidationHook()
+    setupHooks := pgxkit.SetupHook("SET timezone = 'UTC'")
     
     // Combine multiple hooks
-    combinedHooks := dbutil.CombineHooks(
-        dbutil.LoggingHook(logger),
+    combinedHooks := pgxkit.CombineHooks(
+        pgxkit.LoggingHook(logger),
         validationHooks,
         setupHooks,
     )
     
     // Create connection with combined hooks
-    conn3, err := dbutil.NewConnectionWithHooks(ctx, "", sqlc.New, combinedHooks)
+    conn3, err := pgxkit.NewConnectionWithHooks(ctx, "", sqlc.New, combinedHooks)
     if err != nil {
         log.Fatal(err)
     }
@@ -393,13 +393,13 @@ import (
     "log"
     "time"
     
-    "github.com/nhalm/dbutil"
+    "github.com/nhalm/pgxkit"
     "your-project/internal/repository/sqlc"
 )
 
 func main() {
     ctx := context.Background()
-    conn, err := dbutil.NewConnection(ctx, "", sqlc.New)
+    conn, err := pgxkit.NewConnection(ctx, "", sqlc.New)
     if err != nil {
         log.Fatal(err)
     }
@@ -444,20 +444,20 @@ import (
     "log"
     "time"
     
-    "github.com/nhalm/dbutil"
+    "github.com/nhalm/pgxkit"
     "your-project/internal/repository/sqlc"
 )
 
 func main() {
     ctx := context.Background()
-    conn, err := dbutil.NewConnection(ctx, "", sqlc.New)
+    conn, err := pgxkit.NewConnection(ctx, "", sqlc.New)
     if err != nil {
         log.Fatal(err)
     }
     defer conn.Close()
     
     // Custom retry configuration
-    retryConfig := &dbutil.RetryConfig{
+    retryConfig := &pgxkit.RetryConfig{
         MaxRetries: 5,
         BaseDelay:  200 * time.Millisecond,
         MaxDelay:   2 * time.Second,
@@ -489,7 +489,7 @@ func main() {
     }
     
     // Timeout with retry
-    result, err := dbutil.WithTimeoutAndRetry(ctx, 5*time.Second, retryConfig, func(ctx context.Context) (*sqlc.User, error) {
+    result, err := pgxkit.WithTimeoutAndRetry(ctx, 5*time.Second, retryConfig, func(ctx context.Context) (*sqlc.User, error) {
         return conn.Queries().GetUserByEmail(ctx, "john@example.com")
     })
     
@@ -511,7 +511,7 @@ import (
     "log"
     "time"
     
-    "github.com/nhalm/dbutil"
+    "github.com/nhalm/pgxkit"
     "your-project/internal/repository/sqlc"
 )
 
@@ -523,7 +523,7 @@ func main() {
     writeDSN := "postgres://user:password@primary:5432/mydb"
     
     // Create read/write connection
-    rwConn, err := dbutil.NewReadWriteConnection(ctx, readDSN, writeDSN, sqlc.New)
+    rwConn, err := pgxkit.NewReadWriteConnection(ctx, readDSN, writeDSN, sqlc.New)
     if err != nil {
         log.Fatal(err)
     }
@@ -584,7 +584,7 @@ import (
     "log"
     "time"
     
-    "github.com/nhalm/dbutil"
+    "github.com/nhalm/pgxkit"
     "your-project/internal/repository/sqlc"
 )
 
@@ -592,9 +592,9 @@ func main() {
     ctx := context.Background()
     
     // Create logging configuration
-    loggingConfig := &dbutil.LoggingConfig{
-        Logger:              dbutil.NewDefaultLogger(dbutil.LogLevelDebug),
-        LogLevel:            dbutil.LogLevelDebug,
+    loggingConfig := &pgxkit.LoggingConfig{
+        Logger:              pgxkit.NewDefaultLogger(pgxkit.LogLevelDebug),
+        LogLevel:            pgxkit.LogLevelDebug,
         LogSlowQueries:      true,
         SlowQueryThreshold:  500 * time.Millisecond,
         LogConnections:      true,
@@ -602,7 +602,7 @@ func main() {
     }
     
     // Create connection with logging
-    conn, err := dbutil.NewConnectionWithLogging(ctx, "", sqlc.New, loggingConfig)
+    conn, err := pgxkit.NewConnectionWithLogging(ctx, "", sqlc.New, loggingConfig)
     if err != nil {
         log.Fatal(err)
     }
@@ -629,7 +629,7 @@ func main() {
     }
     
     // Manual query logging
-    queryLogger := dbutil.NewQueryLogger(queries, loggingConfig.Logger)
+    queryLogger := pgxkit.NewQueryLogger(queries, loggingConfig.Logger)
     err = queryLogger.LogQuery(ctx, "GetUserByEmail", func() error {
         _, err := queries.GetUserByEmail(ctx, "logged@example.com")
         return err
@@ -640,7 +640,7 @@ func main() {
     }
     
     // Slow query logging
-    slowLogger := dbutil.NewSlowQueryLogger(loggingConfig.Logger, 100*time.Millisecond)
+    slowLogger := pgxkit.NewSlowQueryLogger(loggingConfig.Logger, 100*time.Millisecond)
     start := time.Now()
     _, err = queries.GetAllUsers(ctx)
     duration := time.Since(start)
@@ -659,7 +659,7 @@ import (
     "log"
     "time"
     
-    "github.com/nhalm/dbutil"
+    "github.com/nhalm/pgxkit"
     "your-project/internal/repository/sqlc"
 )
 
@@ -700,7 +700,7 @@ func main() {
     ctx := context.Background()
     
     // Production configuration
-    config := &dbutil.Config{
+    config := &pgxkit.Config{
         MaxConns:        20,
         MinConns:        5,
         MaxConnLifetime: 1 * time.Hour,
@@ -714,7 +714,7 @@ func main() {
     }
     
     // Create connection with all features
-    conn, err := dbutil.NewConnectionWithConfig(ctx, "", sqlc.New, config)
+    conn, err := pgxkit.NewConnectionWithConfig(ctx, "", sqlc.New, config)
     if err != nil {
         log.Fatal(err)
     }
@@ -725,11 +725,11 @@ func main() {
     conn = conn.WithMetrics(metrics)
     
     // Add logging
-    logger := dbutil.NewDefaultLogger(dbutil.LogLevelInfo)
+    logger := pgxkit.NewDefaultLogger(pgxkit.LogLevelInfo)
     loggingConn := conn.WithLogging(logger)
     
     // Add retry logic
-    retryConfig := &dbutil.RetryConfig{
+    retryConfig := &pgxkit.RetryConfig{
         MaxRetries: 3,
         BaseDelay:  100 * time.Millisecond,
         MaxDelay:   1 * time.Second,
@@ -782,7 +782,7 @@ func main() {
 ### 1. Install the package
 
 ```bash
-go get github.com/nhalm/dbutil
+go get github.com/nhalm/pgxkit
 ```
 
 ### 2. Generate your sqlc queries
@@ -805,12 +805,12 @@ sql:
 
 ```go
 import (
-    "github.com/nhalm/dbutil"
+    "github.com/nhalm/pgxkit"
     "your-project/internal/repository/sqlc"
 )
 
 // In your application
-conn, err := dbutil.NewConnection(ctx, "", sqlc.New)
+conn, err := pgxkit.NewConnection(ctx, "", sqlc.New)
 ```
 
 ## Environment Variables

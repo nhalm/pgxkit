@@ -1,16 +1,17 @@
-# Database Utilities
+# pgxkit
 
-[![Go Version](https://img.shields.io/github/go-mod/go-version/nhalm/dbutil)](https://golang.org/doc/devel/release.html)
-[![CI Status](https://github.com/nhalm/dbutil/actions/workflows/ci.yml/badge.svg)](https://github.com/nhalm/dbutil/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/nhalm/dbutil)](https://goreportcard.com/report/github.com/nhalm/dbutil)
-[![Release](https://img.shields.io/github/v/release/nhalm/dbutil)](https://github.com/nhalm/dbutil/releases)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/nhalm/pgxkit)](https://golang.org/doc/devel/release.html)
+[![CI Status](https://github.com/nhalm/pgxkit/actions/workflows/ci.yml/badge.svg)](https://github.com/nhalm/pgxkit/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/nhalm/pgxkit)](https://goreportcard.com/report/github.com/nhalm/pgxkit)
+[![Release](https://img.shields.io/github/v/release/nhalm/pgxkit)](https://github.com/nhalm/pgxkit/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A reusable Go package that provides database connection utilities and testing infrastructure for applications using PostgreSQL with pgx and sqlc.
+A modular toolkit for pgx + sqlc apps — production-ready connection pooling, testing infra, and typed helpers.
 
 ## Overview
 
 This package is designed specifically for **sqlc users** who want:
+
 - **Reusable database utilities** that work with any sqlc-generated queries
 - **Optimized testing infrastructure** with shared connections for faster tests
 - **Type-safe PostgreSQL operations** with comprehensive pgx type helpers
@@ -20,7 +21,7 @@ This package is designed specifically for **sqlc users** who want:
 ## Installation
 
 ```bash
-go get github.com/nhalm/dbutil
+go get github.com/nhalm/pgxkit
 ```
 
 ## Quick Start
@@ -31,28 +32,28 @@ package main
 import (
     "context"
     "log"
-    
-    "github.com/nhalm/dbutil"
+
+    "github.com/nhalm/pgxkit"
     "your-project/internal/repository/sqlc" // Your sqlc-generated package
 )
 
 func main() {
     ctx := context.Background()
-    
+
     // Create connection with your sqlc queries
-    conn, err := dbutil.NewConnection(ctx, "", sqlc.New)
+    conn, err := pgxkit.NewConnection(ctx, "", sqlc.New)
     if err != nil {
         log.Fatal(err)
     }
     defer conn.Close()
-    
+
     // Use your queries directly
     queries := conn.Queries()
     users, err := queries.GetAllUsers(ctx)
     if err != nil {
         log.Fatal(err)
     }
-    
+
     log.Printf("Found %d users", len(users))
 }
 ```
@@ -60,7 +61,9 @@ func main() {
 ## Configuration
 
 ### Environment Variables
+
 The package uses these environment variables with sensible defaults:
+
 - `POSTGRES_HOST` (default: "localhost")
 - `POSTGRES_PORT` (default: 5432)
 - `POSTGRES_USER` (default: "postgres")
@@ -70,26 +73,30 @@ The package uses these environment variables with sensible defaults:
 - `TEST_DATABASE_URL` (for integration tests)
 
 ### Custom Configuration
+
 ```go
-config := &dbutil.Config{
+config := &pgxkit.Config{
     MaxConns:        20,
     MinConns:        5,
     MaxConnLifetime: 1 * time.Hour,
     SearchPath:      "myschema",
 }
-conn, err := dbutil.NewConnectionWithConfig(ctx, "", sqlc.New, config)
+conn, err := pgxkit.NewConnectionWithConfig(ctx, "", sqlc.New, config)
 ```
 
 ## Key Features
 
 ### **Generic Design**
+
 Works with any sqlc-generated queries without coupling to specific packages:
+
 ```go
-conn, err := dbutil.NewConnection(ctx, "", myapp.New)
-conn, err := dbutil.NewConnection(ctx, "", yourapp.New)
+conn, err := pgxkit.NewConnection(ctx, "", myapp.New)
+conn, err := pgxkit.NewConnection(ctx, "", yourapp.New)
 ```
 
 ### **Transaction Support**
+
 ```go
 err = conn.WithTransaction(ctx, func(ctx context.Context, tx *sqlc.Queries) error {
     // All operations run in transaction, automatically rolled back on error
@@ -102,6 +109,7 @@ err = conn.WithTransaction(ctx, func(ctx context.Context, tx *sqlc.Queries) erro
 ```
 
 ### **Health Checks & Monitoring**
+
 ```go
 if conn.IsReady(ctx) {
     log.Println("Database is ready")
@@ -116,13 +124,15 @@ conn = conn.WithHooks(myHooks)
 ```
 
 ### **Read/Write Splitting**
+
 ```go
-rwConn, err := dbutil.NewReadWriteConnection(ctx, readDSN, writeDSN, sqlc.New)
+rwConn, err := pgxkit.NewReadWriteConnection(ctx, readDSN, writeDSN, sqlc.New)
 readQueries := rwConn.ReadQueries()   // Use for SELECT queries
 writeQueries := rwConn.WriteQueries() // Use for INSERT/UPDATE/DELETE
 ```
 
 ### **Retry Logic**
+
 ```go
 retryableConn := conn.WithRetry(nil) // Uses defaults
 err = retryableConn.WithRetryableTransaction(ctx, func(ctx context.Context, tx *sqlc.Queries) error {
@@ -130,19 +140,17 @@ err = retryableConn.WithRetryableTransaction(ctx, func(ctx context.Context, tx *
 })
 ```
 
-
-
 ## Testing
 
 This package provides optimized testing utilities with shared connections for faster integration tests:
 
 ```go
 func TestUserOperations(t *testing.T) {
-    conn := dbutil.RequireTestDB(t, sqlc.New)     // Shared connection
-    dbutil.CleanupTestData(conn,                  // Clean data between tests
+    conn := pgxkit.RequireTestDB(t, sqlc.New)     // Shared connection
+    pgxkit.CleanupTestData(conn,                  // Clean data between tests
         "DELETE FROM users WHERE email LIKE 'test_%'",
     )
-    
+
     // Run your test logic
     queries := conn.Queries()
     user, err := queries.CreateUser(ctx, params)
@@ -151,6 +159,7 @@ func TestUserOperations(t *testing.T) {
 ```
 
 ### Test Database Setup
+
 ```bash
 # Start test database
 docker run --name test-postgres -e POSTGRES_PASSWORD=testpass -p 5433:5432 -d postgres:15
@@ -163,6 +172,7 @@ go test ./...
 ```
 
 ### Test Utilities
+
 - **`RequireTestDB(t, sqlc.New)`** - Returns shared test connection, skips if no database
 - **`CleanupTestData(conn, "DELETE ...")`** - Cleans test data between tests
 - **`GetTestConnection(sqlc.New)`** - Returns connection or nil if unavailable
@@ -173,20 +183,20 @@ Comprehensive pgx type conversion utilities:
 
 ```go
 // String conversions
-pgxText := dbutil.ToPgxText(&myString)
-stringPtr := dbutil.FromPgxText(pgxText)
+pgxText := pgxkit.ToPgxText(&myString)
+stringPtr := pgxkit.FromPgxText(pgxText)
 
 // Numeric conversions
-pgxNum := dbutil.ToPgxNumericFromFloat64Ptr(&myFloat)
-floatPtr := dbutil.FromPgxNumericPtr(pgxNum)
+pgxNum := pgxkit.ToPgxNumericFromFloat64Ptr(&myFloat)
+floatPtr := pgxkit.FromPgxNumericPtr(pgxNum)
 
 // Time conversions
-pgxTime := dbutil.ToPgxTimestamptz(&myTime)
-timePtr := dbutil.FromPgxTimestamptzPtr(pgxTime)
+pgxTime := pgxkit.ToPgxTimestamptz(&myTime)
+timePtr := pgxkit.FromPgxTimestamptzPtr(pgxTime)
 
 // UUID conversions
-pgxUUID := dbutil.ToPgxUUID(myUUID)
-myUUID := dbutil.FromPgxUUID(pgxUUID)
+pgxUUID := pgxkit.ToPgxUUID(myUUID)
+myUUID := pgxkit.FromPgxUUID(pgxUUID)
 ```
 
 ## Error Handling
@@ -195,12 +205,12 @@ Structured error types for consistent error handling:
 
 ```go
 // Create structured errors
-err := dbutil.NewNotFoundError("User", userID)
-err := dbutil.NewValidationError("Email", "create", "address", "invalid format", nil)
-err := dbutil.NewDatabaseError("Order", "query", originalErr)
+err := pgxkit.NewNotFoundError("User", userID)
+err := pgxkit.NewValidationError("Email", "create", "address", "invalid format", nil)
+err := pgxkit.NewDatabaseError("Order", "query", originalErr)
 
 // Use with errors.As for type checking
-var notFoundErr *dbutil.NotFoundError
+var notFoundErr *pgxkit.NotFoundError
 if errors.As(err, &notFoundErr) {
     // Handle not found case
 }
@@ -209,6 +219,7 @@ if errors.As(err, &notFoundErr) {
 ## Examples
 
 See [examples.md](examples.md) for comprehensive usage examples including:
+
 - Custom configuration
 - Transaction handling
 - Error handling patterns
@@ -229,7 +240,7 @@ import (
     _ "github.com/golang-migrate/migrate/v4/source/file"
 )
 
-m, err := migrate.New("file://migrations", dbutil.GetDSN())
+m, err := migrate.New("file://migrations", pgxkit.GetDSN())
 if err != nil {
     log.Fatal(err)
 }
@@ -239,3 +250,4 @@ if err := m.Up(); err != nil {
     log.Fatal(err)
 }
 ```
+
