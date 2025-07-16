@@ -2,10 +2,161 @@ package pgxkit
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/jackc/pgx/v5"
 )
+
+// HookFunc is the universal hook function signature for operation-level hooks
+type HookFunc func(ctx context.Context, sql string, args []interface{}, operationErr error) error
+
+// Hooks manages both operation-level and connection-level hooks
+type Hooks struct {
+	mu sync.RWMutex
+
+	// Operation-level hooks
+	beforeOperation   []HookFunc
+	afterOperation    []HookFunc
+	beforeTransaction []HookFunc
+	afterTransaction  []HookFunc
+	onShutdown        []HookFunc
+
+	// Connection-level hooks (pgx native signatures)
+	connectionHooks *ConnectionHooks
+}
+
+// NewHooks creates a new Hooks manager
+func NewHooks() *Hooks {
+	return &Hooks{
+		beforeOperation:   make([]HookFunc, 0),
+		afterOperation:    make([]HookFunc, 0),
+		beforeTransaction: make([]HookFunc, 0),
+		afterTransaction:  make([]HookFunc, 0),
+		onShutdown:        make([]HookFunc, 0),
+		connectionHooks:   NewConnectionHooks(),
+	}
+}
+
+// AddHook adds an operation-level hook
+func (h *Hooks) AddHook(hookType string, hookFunc HookFunc) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	switch hookType {
+	case "BeforeOperation":
+		h.beforeOperation = append(h.beforeOperation, hookFunc)
+	case "AfterOperation":
+		h.afterOperation = append(h.afterOperation, hookFunc)
+	case "BeforeTransaction":
+		h.beforeTransaction = append(h.beforeTransaction, hookFunc)
+	case "AfterTransaction":
+		h.afterTransaction = append(h.afterTransaction, hookFunc)
+	case "OnShutdown":
+		h.onShutdown = append(h.onShutdown, hookFunc)
+	default:
+		return fmt.Errorf("unknown hook type: %s", hookType)
+	}
+
+	return nil
+}
+
+// AddConnectionHook adds a connection-level hook
+func (h *Hooks) AddConnectionHook(hookType string, hookFunc interface{}) error {
+	switch hookType {
+	case "OnConnect":
+		if fn, ok := hookFunc.(func(*pgx.Conn) error); ok {
+			h.connectionHooks.AddOnConnect(fn)
+			return nil
+		}
+		return fmt.Errorf("OnConnect hook must be of type func(*pgx.Conn) error")
+	case "OnDisconnect":
+		if fn, ok := hookFunc.(func(*pgx.Conn)); ok {
+			h.connectionHooks.AddOnDisconnect(fn)
+			return nil
+		}
+		return fmt.Errorf("OnDisconnect hook must be of type func(*pgx.Conn)")
+	case "OnAcquire":
+		if fn, ok := hookFunc.(func(context.Context, *pgx.Conn) error); ok {
+			h.connectionHooks.AddOnAcquire(fn)
+			return nil
+		}
+		return fmt.Errorf("OnAcquire hook must be of type func(context.Context, *pgx.Conn) error")
+	case "OnRelease":
+		if fn, ok := hookFunc.(func(*pgx.Conn)); ok {
+			h.connectionHooks.AddOnRelease(fn)
+			return nil
+		}
+		return fmt.Errorf("OnRelease hook must be of type func(*pgx.Conn)")
+	default:
+		return fmt.Errorf("unknown connection hook type: %s", hookType)
+	}
+}
+
+// ExecuteBeforeOperation executes all BeforeOperation hooks
+func (h *Hooks) ExecuteBeforeOperation(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for _, hook := range h.beforeOperation {
+		if err := hook(ctx, sql, args, operationErr); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ExecuteAfterOperation executes all AfterOperation hooks
+func (h *Hooks) ExecuteAfterOperation(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for _, hook := range h.afterOperation {
+		if err := hook(ctx, sql, args, operationErr); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ExecuteBeforeTransaction executes all BeforeTransaction hooks
+func (h *Hooks) ExecuteBeforeTransaction(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for _, hook := range h.beforeTransaction {
+		if err := hook(ctx, sql, args, operationErr); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ExecuteAfterTransaction executes all AfterTransaction hooks
+func (h *Hooks) ExecuteAfterTransaction(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for _, hook := range h.afterTransaction {
+		if err := hook(ctx, sql, args, operationErr); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ExecuteOnShutdown executes all OnShutdown hooks
+func (h *Hooks) ExecuteOnShutdown(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for _, hook := range h.onShutdown {
+		if err := hook(ctx, sql, args, operationErr); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // ConnectionHooks manages connection lifecycle hooks
 type ConnectionHooks struct {
