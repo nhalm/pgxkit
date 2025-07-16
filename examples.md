@@ -1,6 +1,6 @@
 # pgxkit Usage Examples
 
-This document provides comprehensive examples of using pgxkit v2.0 - the tool-agnostic PostgreSQL toolkit.
+This document provides comprehensive examples of using pgxkit - the tool-agnostic PostgreSQL toolkit.
 
 ## Table of Contents
 
