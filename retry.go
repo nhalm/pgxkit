@@ -11,15 +11,25 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// RetryConfig holds configuration for retry logic
+// RetryConfig holds configuration for retry logic.
+// It uses exponential backoff with jitter to avoid thundering herd problems.
 type RetryConfig struct {
-	MaxRetries int
-	BaseDelay  time.Duration
-	MaxDelay   time.Duration
-	Multiplier float64
+	MaxRetries int           // Maximum number of retry attempts
+	BaseDelay  time.Duration // Initial delay between retries
+	MaxDelay   time.Duration // Maximum delay between retries
+	Multiplier float64       // Multiplier for exponential backoff
 }
 
-// DefaultRetryConfig returns a sensible default retry configuration
+// DefaultRetryConfig returns a sensible default retry configuration.
+// It provides 3 retries with exponential backoff starting at 100ms,
+// capped at 1 second with a 2x multiplier.
+//
+// Example:
+//
+//	config := pgxkit.DefaultRetryConfig()
+//	// Customize if needed:
+//	config.MaxRetries = 5
+//	config.MaxDelay = 5 * time.Second
 func DefaultRetryConfig() *RetryConfig {
 	return &RetryConfig{
 		MaxRetries: 3,
@@ -29,7 +39,14 @@ func DefaultRetryConfig() *RetryConfig {
 	}
 }
 
-// WithTimeout executes a function with a timeout
+// WithTimeout executes a function with a timeout.
+// This is a generic utility function that can be used with any operation.
+//
+// Example:
+//
+//	result, err := pgxkit.WithTimeout(ctx, 5*time.Second, func(ctx context.Context) (*User, error) {
+//	    return getUserFromDatabase(ctx)
+//	})
 func WithTimeout[T any](ctx context.Context, timeout time.Duration, fn func(context.Context) (T, error)) (T, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -37,7 +54,15 @@ func WithTimeout[T any](ctx context.Context, timeout time.Duration, fn func(cont
 	return fn(ctx)
 }
 
-// WithTimeoutAndRetry executes a function with timeout and retry logic
+// WithTimeoutAndRetry executes a function with timeout and retry logic.
+// This combines timeout handling with intelligent retry logic for transient failures.
+//
+// Example:
+//
+//	config := pgxkit.DefaultRetryConfig()
+//	result, err := pgxkit.WithTimeoutAndRetry(ctx, 5*time.Second, config, func(ctx context.Context) (*User, error) {
+//	    return getUserFromDatabase(ctx)
+//	})
 func WithTimeoutAndRetry[T any](ctx context.Context, timeout time.Duration, retryConfig *RetryConfig, fn func(context.Context) (T, error)) (T, error) {
 	if retryConfig == nil {
 		retryConfig = DefaultRetryConfig()
