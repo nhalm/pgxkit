@@ -345,11 +345,6 @@ func CombineHooks(hooksList ...*ConnectionHooks) *ConnectionHooks {
 	return combined
 }
 
-// GetConnectionHooks returns the connection hooks for integration with pgxpool
-func (h *hooks) getConnectionHooks() *ConnectionHooks {
-	return h.connectionHooks
-}
-
 // ConfigurePool configures a pgxpool.Config with the connection hooks
 // This allows the hooks to be properly integrated with the pool lifecycle
 func (h *hooks) configurePool(config *pgxpool.Config) {
