@@ -12,13 +12,7 @@ func TestRequireTestPool(t *testing.T) {
 		// Test was skipped, which is fine
 		return
 	}
-
-	// Test that we got a valid pool
-	if pool == nil {
-		t.Error("Expected pool to be non-nil")
-	}
 }
-
 func TestGetTestPool(t *testing.T) {
 	// This test requires TEST_DATABASE_URL to be set
 	pool := getTestPool()
@@ -26,11 +20,6 @@ func TestGetTestPool(t *testing.T) {
 		// No test database available, skip
 		t.Skip("TEST_DATABASE_URL not set, skipping integration test")
 		return
-	}
-
-	// Test that we got a valid pool
-	if pool == nil {
-		t.Error("Expected pool to be non-nil")
 	}
 
 	// Test that subsequent calls return the same pool

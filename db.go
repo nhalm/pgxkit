@@ -18,6 +18,7 @@ type DB struct {
 	hooks     *hooks
 	mu        sync.RWMutex
 	shutdown  bool
+	activeOps sync.WaitGroup // Tracks active operations for graceful shutdown
 }
 
 // DBConfig holds configuration options for database connections
@@ -198,6 +199,7 @@ func (db *DB) AddConnectionHook(hookType string, hookFunc interface{}) error {
 }
 
 // Shutdown gracefully shuts down the database connections
+// It waits for active operations to complete, respecting the context timeout
 func (db *DB) Shutdown(ctx context.Context) error {
 	db.mu.Lock()
 	if db.shutdown {
@@ -206,6 +208,21 @@ func (db *DB) Shutdown(ctx context.Context) error {
 	}
 	db.shutdown = true
 	db.mu.Unlock()
+
+	// Wait for active operations to complete with timeout handling
+	done := make(chan struct{})
+	go func() {
+		db.activeOps.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// All operations completed successfully
+	case <-ctx.Done():
+		// Context timeout - proceed with shutdown anyway
+		// In production, you might want to log this as a warning
+	}
 
 	// Execute shutdown hooks
 	if err := db.hooks.executeOnShutdown(ctx, "", nil, nil); err != nil {
@@ -261,6 +278,10 @@ func (db *DB) executeQuery(ctx context.Context, pool *pgxpool.Pool, sql string, 
 	}
 	db.mu.RUnlock()
 
+	// Track active operation for graceful shutdown
+	db.activeOps.Add(1)
+	defer db.activeOps.Done()
+
 	// Execute BeforeOperation hooks
 	if err := db.hooks.executeBeforeOperation(ctx, sql, args, nil); err != nil {
 		return nil, fmt.Errorf("before operation hook failed: %w", err)
@@ -293,6 +314,10 @@ func (db *DB) executeQueryRow(ctx context.Context, pool *pgxpool.Pool, sql strin
 	}
 	db.mu.RUnlock()
 
+	// Track active operation for graceful shutdown
+	db.activeOps.Add(1)
+	defer db.activeOps.Done()
+
 	// Execute BeforeOperation hooks
 	if err := db.hooks.executeBeforeOperation(ctx, sql, args, nil); err != nil {
 		return &shutdownRow{err: fmt.Errorf("before operation hook failed: %w", err)}
@@ -320,6 +345,10 @@ func (db *DB) executeExec(ctx context.Context, pool *pgxpool.Pool, sql string, a
 		return pgconn.CommandTag{}, fmt.Errorf("database is not connected")
 	}
 	db.mu.RUnlock()
+
+	// Track active operation for graceful shutdown
+	db.activeOps.Add(1)
+	defer db.activeOps.Done()
 
 	// Execute BeforeOperation hooks
 	if err := db.hooks.executeBeforeOperation(ctx, sql, args, nil); err != nil {
