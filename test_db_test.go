@@ -67,8 +67,8 @@ func TestEnableGolden(t *testing.T) {
 
 	testDB := NewTestDB(pool)
 
-	// Test EnableGolden method
-	goldenDB := testDB.EnableGolden(t, "TestExample")
+	// Test EnableGolden method - no longer takes testing.T
+	goldenDB := testDB.EnableGolden("TestExample")
 
 	if goldenDB == nil {
 		t.Error("EnableGolden should return a DB instance")
@@ -79,14 +79,52 @@ func TestEnableGolden(t *testing.T) {
 	}
 }
 
+func TestAssertGolden(t *testing.T) {
+	pool := GetTestPool()
+	if pool == nil {
+		t.Skip("TEST_DATABASE_URL not set, skipping test")
+		return
+	}
+
+	testDB := NewTestDB(pool)
+	goldenDB := testDB.EnableGolden("TestAssertGolden")
+
+	// Execute a query to capture plan
+	ctx := context.Background()
+	rows, err := goldenDB.Query(ctx, "SELECT 1 as test_column")
+	if err != nil {
+		t.Fatalf("Query should not fail: %v", err)
+	}
+	defer rows.Close()
+
+	// Process results
+	var result int
+	if rows.Next() {
+		err = rows.Scan(&result)
+		if err != nil {
+			t.Fatalf("Scan should not fail: %v", err)
+		}
+	}
+
+	if result != 1 {
+		t.Errorf("Expected result 1, got %d", result)
+	}
+
+	// Test AssertGolden - this should create baseline on first run
+	goldenDB.AssertGolden(t, "TestAssertGolden")
+
+	// Clean up
+	defer CleanupGolden("TestAssertGolden")
+}
+
 func TestCleanupGolden(t *testing.T) {
 	// Create temporary directory for test
 	tempDir := t.TempDir()
 
-	// Create some test golden files
+	// Create some test golden files using the new naming pattern
 	goldenFiles := []string{
-		filepath.Join(tempDir, "testdata", "golden", "TestCleanup_query_1.json"),
-		filepath.Join(tempDir, "testdata", "golden", "TestCleanup_query_2.json"),
+		filepath.Join(tempDir, "testdata", "golden", "TestCleanup.json"),
+		filepath.Join(tempDir, "testdata", "golden", "TestCleanup.json.baseline"),
 	}
 
 	for _, file := range goldenFiles {
@@ -95,7 +133,7 @@ func TestCleanupGolden(t *testing.T) {
 			t.Fatalf("Failed to create directory: %v", err)
 		}
 
-		err = os.WriteFile(file, []byte(`{"test": "data"}`), 0644)
+		err = os.WriteFile(file, []byte(`[{"query": 1, "sql": "SELECT 1", "plan": []}]`), 0644)
 		if err != nil {
 			t.Fatalf("Failed to create test file: %v", err)
 		}
@@ -159,7 +197,7 @@ func TestTestDBIntegration(t *testing.T) {
 	}
 
 	// Test EnableGolden
-	goldenDB := testDB.EnableGolden(t, "TestIntegration")
+	goldenDB := testDB.EnableGolden("TestIntegration")
 
 	// Execute a simple query that should capture EXPLAIN plan
 	ctx := context.Background()
@@ -188,10 +226,9 @@ func TestTestDBIntegration(t *testing.T) {
 		t.Fatalf("Clean should not fail: %v", err)
 	}
 
-	// Verify golden file was created (if database is available)
-	goldenFile := "testdata/golden/TestIntegration_query_1.json"
-	if _, err := os.Stat(goldenFile); err == nil {
-		// Clean up the golden file
-		os.Remove(goldenFile)
-	}
+	// Test AssertGolden
+	goldenDB.AssertGolden(t, "TestIntegration")
+
+	// Clean up golden files
+	defer CleanupGolden("TestIntegration")
 }
