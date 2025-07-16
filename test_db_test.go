@@ -8,13 +8,7 @@ import (
 )
 
 func TestNewTestDB(t *testing.T) {
-	pool := GetTestPool()
-	if pool == nil {
-		t.Skip("TEST_DATABASE_URL not set, skipping test")
-		return
-	}
-
-	testDB := NewTestDB(pool)
+	testDB := NewTestDB()
 
 	if testDB == nil {
 		t.Error("NewTestDB should not return nil")
@@ -24,16 +18,19 @@ func TestNewTestDB(t *testing.T) {
 	if testDB.DB == nil {
 		t.Error("TestDB should wrap a valid DB instance")
 	}
-}
 
-func TestSetup(t *testing.T) {
-	pool := GetTestPool()
-	if pool == nil {
+	// If no test database is available, writePool will be nil
+	if testDB.writePool == nil {
 		t.Skip("TEST_DATABASE_URL not set, skipping test")
 		return
 	}
+}
 
-	testDB := NewTestDB(pool)
+func TestSetup(t *testing.T) {
+	testDB := RequireDB(t)
+	if testDB == nil {
+		return // Test was skipped
+	}
 
 	// Test Setup method
 	err := testDB.Setup()
@@ -43,13 +40,10 @@ func TestSetup(t *testing.T) {
 }
 
 func TestClean(t *testing.T) {
-	pool := GetTestPool()
-	if pool == nil {
-		t.Skip("TEST_DATABASE_URL not set, skipping test")
-		return
+	testDB := RequireDB(t)
+	if testDB == nil {
+		return // Test was skipped
 	}
-
-	testDB := NewTestDB(pool)
 
 	// Test Clean method
 	err := testDB.Clean()
@@ -59,13 +53,10 @@ func TestClean(t *testing.T) {
 }
 
 func TestEnableGolden(t *testing.T) {
-	pool := GetTestPool()
-	if pool == nil {
-		t.Skip("TEST_DATABASE_URL not set, skipping test")
-		return
+	testDB := RequireDB(t)
+	if testDB == nil {
+		return // Test was skipped
 	}
-
-	testDB := NewTestDB(pool)
 
 	// Test EnableGolden method - no longer takes testing.T
 	goldenDB := testDB.EnableGolden("TestExample")
@@ -80,13 +71,11 @@ func TestEnableGolden(t *testing.T) {
 }
 
 func TestAssertGolden(t *testing.T) {
-	pool := GetTestPool()
-	if pool == nil {
-		t.Skip("TEST_DATABASE_URL not set, skipping test")
-		return
+	testDB := RequireDB(t)
+	if testDB == nil {
+		return // Test was skipped
 	}
 
-	testDB := NewTestDB(pool)
 	goldenDB := testDB.EnableGolden("TestAssertGolden")
 
 	// Execute a query to capture plan

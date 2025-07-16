@@ -16,8 +16,8 @@ var (
 	testDBOnce sync.Once
 )
 
-// GetTestPool returns a shared test database pool, initializing it once
-func GetTestPool() *pgxpool.Pool {
+// getTestPool returns a shared test database pool, initializing it once
+func getTestPool() *pgxpool.Pool {
 	testDBOnce.Do(func() {
 		testDBPool = initTestDatabasePool()
 	})
@@ -57,17 +57,33 @@ func initTestDatabasePool() *pgxpool.Pool {
 	return pool
 }
 
-// RequireTestPool ensures a test database pool is available or skips the test
-func RequireTestPool(t *testing.T) *pgxpool.Pool {
-	pool := GetTestPool()
+// requireTestPool ensures a test database pool is available or skips the test
+func requireTestPool(t *testing.T) *pgxpool.Pool {
+	pool := getTestPool()
 	if pool == nil {
 		t.Skip("TEST_DATABASE_URL not set, skipping integration test")
 	}
 	return pool
 }
 
-// CleanupTestData executes cleanup SQL statements on a pool
-func CleanupTestData(pool *pgxpool.Pool, sqlStatements ...string) {
+// CleanupTestData executes cleanup SQL statements on the shared test database
+func CleanupTestData(sqlStatements ...string) {
+	pool := getTestPool()
+	if pool == nil {
+		return
+	}
+
+	ctx := context.Background()
+	for _, sql := range sqlStatements {
+		_, err := pool.Exec(ctx, sql)
+		if err != nil {
+			log.Printf("Warning: Failed to cleanup test data with SQL '%s': %v", sql, err)
+		}
+	}
+}
+
+// cleanupTestDataWithPool executes cleanup SQL statements on a specific pool (internal use)
+func cleanupTestDataWithPool(pool *pgxpool.Pool, sqlStatements ...string) {
 	if pool == nil {
 		return
 	}

@@ -7,7 +7,7 @@ import (
 
 func TestRequireTestPool(t *testing.T) {
 	// This test requires TEST_DATABASE_URL to be set
-	pool := RequireTestPool(t)
+	pool := requireTestPool(t)
 	if pool == nil {
 		// Test was skipped, which is fine
 		return
@@ -21,7 +21,7 @@ func TestRequireTestPool(t *testing.T) {
 
 func TestGetTestPool(t *testing.T) {
 	// This test requires TEST_DATABASE_URL to be set
-	pool := GetTestPool()
+	pool := getTestPool()
 	if pool == nil {
 		// No test database available, skip
 		t.Skip("TEST_DATABASE_URL not set, skipping integration test")
@@ -34,7 +34,7 @@ func TestGetTestPool(t *testing.T) {
 	}
 
 	// Test that subsequent calls return the same pool
-	pool2 := GetTestPool()
+	pool2 := getTestPool()
 	if pool2 == nil {
 		t.Error("Expected second call to return pool")
 	}
@@ -45,24 +45,18 @@ func TestGetTestPool(t *testing.T) {
 }
 
 func TestCleanupTestData(t *testing.T) {
-	pool := GetTestPool()
-	if pool == nil {
-		t.Skip("TEST_DATABASE_URL not set, skipping integration test")
-		return
-	}
-
 	// Test cleanup with valid SQL (should not error)
-	CleanupTestData(pool, "SELECT 1", "SELECT 2")
+	CleanupTestData("SELECT 1", "SELECT 2")
 
 	// Test cleanup with invalid SQL (should not fail the test, just log warnings)
-	CleanupTestData(pool, "INVALID SQL STATEMENT")
+	CleanupTestData("INVALID SQL STATEMENT")
 
-	// Test cleanup with nil pool (should not panic)
-	CleanupTestData(nil, "SELECT 1")
+	// Test cleanup when no test database is available (should not panic)
+	// This is tested implicitly - if TEST_DATABASE_URL is not set, it just returns
 }
 
 func TestPoolHealthCheck(t *testing.T) {
-	pool := GetTestPool()
+	pool := getTestPool()
 	if pool == nil {
 		t.Skip("TEST_DATABASE_URL not set, skipping integration test")
 		return
