@@ -379,15 +379,6 @@ db.AddHook(pgxkit.BeforeOperation, func(ctx context.Context, sql string, args []
 })
 ```
 
-## Migration from v1.x
-
-pgxkit v2.0 is a complete rewrite focused on tool-agnostic design. Key changes:
-
-- **Removed sqlc coupling** - Now works with any PostgreSQL approach
-- **New DB type** - Replaces generic Connection types
-- **Enhanced hooks** - More flexible and powerful hook system
-- **Improved testing** - Golden test support for performance regression detection
-
 ## Contributing
 
 We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
