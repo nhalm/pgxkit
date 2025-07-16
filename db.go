@@ -189,8 +189,9 @@ func (db *DB) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, err
 }
 
 // AddHook adds a hook to the database
-func (db *DB) AddHook(hookType string, hookFunc HookFunc) error {
-	return db.hooks.AddHook(hookType, hookFunc)
+func (db *DB) AddHook(hookType HookType, hookFunc HookFunc) *DB {
+	db.hooks.AddHook(hookType, hookFunc)
+	return db
 }
 
 // AddConnectionHook adds a connection-level hook

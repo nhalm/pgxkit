@@ -86,11 +86,7 @@ func (tdb *TestDB) EnableGolden(testName string) *DB {
 	}
 
 	// Add the golden test hook to capture EXPLAIN plans
-	err := goldenDB.AddHook("BeforeOperation", goldenHook.captureExplainPlan)
-	if err != nil {
-		// Since we don't have testing.T here, we'll just panic on setup errors
-		panic(fmt.Sprintf("Failed to add golden test hook: %v", err))
-	}
+	goldenDB.AddHook(BeforeOperation, goldenHook.captureExplainPlan)
 
 	return goldenDB
 }

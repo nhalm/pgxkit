@@ -9,6 +9,17 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// HookType represents the type of hook
+type HookType int
+
+const (
+	BeforeOperation HookType = iota
+	AfterOperation
+	BeforeTransaction
+	AfterTransaction
+	OnShutdown
+)
+
 // HookFunc is the universal hook function signature for operation-level hooks
 type HookFunc func(ctx context.Context, sql string, args []interface{}, operationErr error) error
 
@@ -40,26 +51,22 @@ func NewHooks() *Hooks {
 }
 
 // AddHook adds an operation-level hook
-func (h *Hooks) AddHook(hookType string, hookFunc HookFunc) error {
+func (h *Hooks) AddHook(hookType HookType, hookFunc HookFunc) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	switch hookType {
-	case "BeforeOperation":
+	case BeforeOperation:
 		h.beforeOperation = append(h.beforeOperation, hookFunc)
-	case "AfterOperation":
+	case AfterOperation:
 		h.afterOperation = append(h.afterOperation, hookFunc)
-	case "BeforeTransaction":
+	case BeforeTransaction:
 		h.beforeTransaction = append(h.beforeTransaction, hookFunc)
-	case "AfterTransaction":
+	case AfterTransaction:
 		h.afterTransaction = append(h.afterTransaction, hookFunc)
-	case "OnShutdown":
+	case OnShutdown:
 		h.onShutdown = append(h.onShutdown, hookFunc)
-	default:
-		return fmt.Errorf("unknown hook type: %s", hookType)
 	}
-
-	return nil
 }
 
 // AddConnectionHook adds a connection-level hook
