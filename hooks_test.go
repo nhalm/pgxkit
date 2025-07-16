@@ -231,27 +231,6 @@ func TestCombineHooksEmpty(t *testing.T) {
 	}
 }
 
-func TestLoggingHook(t *testing.T) {
-	// Mock logger that records log calls
-	logCalls := []string{}
-	mockLogger := &mockLogger{
-		logFunc: func(ctx context.Context, level LogLevel, msg string, data map[string]interface{}) {
-			logCalls = append(logCalls, msg)
-		},
-	}
-
-	hooks := LoggingHook(mockLogger)
-	if hooks == nil {
-		t.Fatal("Expected LoggingHook to return non-nil")
-	}
-
-	// Test that hooks exist (we can't easily test execution without pgx.Conn)
-	// But we can verify the hook was created successfully
-	if len(logCalls) != 0 {
-		t.Errorf("Expected no log calls yet, got %d", len(logCalls))
-	}
-}
-
 func TestValidationHook(t *testing.T) {
 	hooks := ValidationHook()
 	if hooks == nil {
@@ -272,16 +251,5 @@ func TestSetupHook(t *testing.T) {
 	hooks = SetupHook("")
 	if hooks == nil {
 		t.Fatal("Expected SetupHook to return non-nil even with empty SQL")
-	}
-}
-
-// Mock logger for testing
-type mockLogger struct {
-	logFunc func(ctx context.Context, level LogLevel, msg string, data map[string]interface{})
-}
-
-func (m *mockLogger) Log(ctx context.Context, level LogLevel, msg string, data map[string]interface{}) {
-	if m.logFunc != nil {
-		m.logFunc(ctx, level, msg, data)
 	}
 }

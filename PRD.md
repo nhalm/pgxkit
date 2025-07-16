@@ -156,10 +156,56 @@ type HookFunc func(ctx context.Context, sql string, args []interface{}, operatio
 
 **Benefits:**
 - **Dual-level hooks**: Both operation-level (query/exec) and connection-level (pgx lifecycle)
-- **Extensible architecture**: Circuit breakers, logging, tracing, metrics all as hooks
+- **Extensible architecture**: Circuit breakers, logging, tracing, metrics all as hooks (users implement with their preferred libraries)
 - **Middleware-like pattern**: Familiar to Go developers, single consistent API
 - **Error handling**: Hook errors stop execution chain
 - **pgx compatibility**: Full support for pgx's connection lifecycle hooks
+
+### ✅ COMPLETED: Logging Abstraction Removal (Issue #19)
+
+**Implementation Date:** July 16, 2025  
+**PR:** [#18](https://github.com/nhalm/pgxkit/pull/18)  
+**Branch:** `implement-testing-infrastructure`
+
+**What was implemented:**
+- **Removed logging.go entirely** - No more custom Logger interface or LogLevel types
+- **Removed LoggingHook function** - Users implement their own logging with preferred libraries
+- **Removed NewConnectionWithLoggingHooks** - Users create custom hooks with NewConnectionWithHooks
+- **Cleaner API** - pgxkit focuses on PostgreSQL toolkit, not logging framework
+- **Better flexibility** - Users can use slog, logrus, zap, or any logger directly in hooks
+
+**Rationale:**
+- **No forced abstractions**: Users shouldn't have to write adapter code for their preferred logger
+- **Focused scope**: pgxkit should be a PostgreSQL toolkit, not a logging framework
+- **User choice**: Let users pick their own logging library, format, and configuration
+- **Simpler maintenance**: No need to maintain logging interfaces that try to be universal
+
+**Migration Guide:**
+```go
+// OLD: Forced to use pgxkit's Logger interface
+logger := pgxkit.NewDefaultLogger(pgxkit.LogLevelInfo)
+hooks := pgxkit.LoggingHook(logger)
+
+// NEW: Use any logger directly in hooks
+import "log/slog"
+db.AddHook(pgxkit.BeforeOperation, func(ctx context.Context, op string, sql string, args []interface{}) {
+    slog.InfoContext(ctx, "executing query", "operation", op, "sql", sql)
+})
+
+// Or with logrus
+import "github.com/sirupsen/logrus"
+db.AddHook(pgxkit.BeforeOperation, func(ctx context.Context, op string, sql string, args []interface{}) {
+    logrus.WithContext(ctx).WithFields(logrus.Fields{
+        "operation": op,
+        "sql": sql,
+    }).Info("executing query")
+})
+```
+
+**Files Removed:**
+- `logging.go` - Entire file deleted
+- All Logger/LogLevel types and DefaultLogger implementation
+- LoggingHook function and related test code
 
 ### 3. Type Helpers
 **Priority:** P1 (Should Have)
@@ -580,9 +626,11 @@ func CleanupGolden(testName string) error
 
 **Files to Keep and Update:**
 - `retry.go` (still useful for production)
-- `logging.go` (still useful for production)
 - `errors.go` (still useful for structured error handling)
 - `pgx_helpers.go` → rename to `types.go` and clean up
+
+**Files Removed:**
+- `logging.go` - Removed logging abstraction, users should implement their own logging hooks with preferred libraries
 
 **Files to Update:**
 - `README.md` - Update for v2.0 tool-agnostic approach
