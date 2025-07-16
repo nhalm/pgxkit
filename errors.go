@@ -5,9 +5,28 @@ import "fmt"
 // Database error types - these are generic errors that can be used by any repository.
 // These errors provide consistent error handling across database operations and can be
 // used with errors.As() for type-safe error handling.
+//
+// Example usage:
+//
+//	// In your repository:
+//	user, err := getUserByID(ctx, userID)
+//	if err != nil {
+//	    var notFoundErr *pgxkit.NotFoundError
+//	    if errors.As(err, &notFoundErr) {
+//	        // Handle not found case
+//	        return nil, fmt.Errorf("user does not exist")
+//	    }
+//	    return nil, err
+//	}
 
 // NotFoundError represents when a requested entity is not found in the database.
 // This error should be used instead of returning pgx.ErrNoRows directly.
+//
+// Example:
+//
+//	if err == pgx.ErrNoRows {
+//	    return nil, pgxkit.NewNotFoundError("User", userID)
+//	}
 type NotFoundError struct {
 	Entity     string
 	Identifier interface{}
