@@ -177,8 +177,12 @@ pgxkit.ToPgxTimestamp(timePtr)
 - Supports clean architecture patterns
 - Consistent type handling across applications
 
-### 4. Testing Infrastructure
-**Priority:** P1 (Should Have)
+### 4. ✅ Testing Infrastructure
+**Priority:** P1 (Should Have) - **COMPLETED**
+
+**Implementation Date:** July 16, 2025  
+**PR:** [#18](https://github.com/nhalm/pgxkit/pull/18)  
+**Branch:** `fix-testdb-api-issue-8`
 
 ```go
 // Simple TestDB with just 3 methods
@@ -196,21 +200,30 @@ func TestSomething(t *testing.T) {
 }
 ```
 
-**Key Requirements:**
-- **TestDB is just an embedded *DB** with exactly 3 methods
-- **Setup()** - Prepare database for testing (migrations, seed data, etc.)
-- **Clean()** - Clean database after test (truncate tables, reset sequences, etc.)
-- **EnableGolden(t, testName)** - Returns new *DB with golden test hooks added
-- Golden test hooks automatically capture EXPLAIN plans for all queries
-- Multiple queries per test create separate golden files
-- File naming: `testdata/golden/TestName_query_1.json`, `TestName_query_2.json`, etc.
+**What was implemented:**
+- **TestDB Structure**: Just an embedded *DB with exactly 3 methods: `Setup()`, `Clean()`, `EnableGolden()`
+- **Correct Constructor**: `NewTestDB(pool *pgxpool.Pool)` takes pool parameter directly
+- **EnableGolden Method**: Returns new *DB with golden test hooks added (not void)
+- **Golden Test Hooks**: Automatic EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) plan capture
+- **Multiple Query Support**: Each query gets separate golden file with auto-incrementing names
+- **Regression Detection**: Automatic comparison of EXPLAIN plans to detect performance changes
+- **File Management**: `testdata/golden/TestName_query_1.json`, `TestName_query_2.json`, etc.
+- **Package Functions**: `RequireDB(t)` and `CleanupGolden(testName)` helper functions
+
+**Key Technical Details:**
+- Golden test hooks are implemented as `BeforeOperation` hooks with database access
+- EXPLAIN plans captured in JSON format with ANALYZE and BUFFERS options
+- Regression detection compares JSON content ignoring whitespace differences
+- Multiple queries per test automatically create separate numbered golden files
+- Test database integration via shared pool from `GetTestPool()`
 
 **Benefits:**
-- Dead simple API - just 3 methods
-- Golden test hooks are just regular hooks added to DB
-- No complex connection management
-- Automatic EXPLAIN plan capture and regression detection
-- Clean separation of concerns
+- ✅ Dead simple API - just 3 methods
+- ✅ Golden test hooks are just regular hooks added to DB
+- ✅ No complex connection management
+- ✅ Automatic EXPLAIN plan capture and regression detection
+- ✅ Clean separation of concerns
+- ✅ Matches PRD specification exactly
 
 ### 5. Graceful Shutdown
 **Priority:** P1 (Should Have) - **COMPLETED**
@@ -348,10 +361,10 @@ func (db *DB) HealthCheck(ctx context.Context) error
 - Type helpers
 - Error handling
 
-### Phase 3: Testing & Polish (Week 5-6)
-- TestDB implementation
-- Golden test support
-- Documentation and examples
+### ✅ Phase 3: Testing & Polish (Week 5-6) - COMPLETED
+- ✅ TestDB implementation (Issue #8)
+- ✅ Golden test support (Issue #8)
+- [ ] Documentation and examples
 
 ### Phase 4: Release (Week 7)
 - Implementation guide
@@ -380,7 +393,7 @@ func (db *DB) HealthCheck(ctx context.Context) error
 
 ### Should Have
 - [x] Performance overhead <1ms for hooks
-- [ ] Golden test support for query plan regression testing
+- [x] Golden test support for query plan regression testing
 - [x] Graceful shutdown with configurable timeouts
 - [ ] Implementation guide with working examples
 
@@ -534,7 +547,7 @@ func FromPgxTimestamptz(ts pgtype.Timestamptz) time.Time
 // ... additional type helpers as needed
 ```
 
-### 4. `test_db.go` - Testing Infrastructure
+### 4. ✅ `test_db.go` - Testing Infrastructure - COMPLETED
 ```go
 // TestDB is just an embedded DB with 3 simple methods
 type TestDB struct {
@@ -553,6 +566,10 @@ func (tdb *TestDB) Clean() error
 
 // EnableGolden returns a new DB with golden test hooks added
 func (tdb *TestDB) EnableGolden(t *testing.T, testName string) *DB
+
+// Package-level helper functions
+func RequireDB(t *testing.T) *TestDB
+func CleanupGolden(testName string) error
 ```
 
 ### 5. Clean Up Tasks
