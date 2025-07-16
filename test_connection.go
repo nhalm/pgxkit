@@ -81,18 +81,3 @@ func CleanupTestData(sqlStatements ...string) {
 		}
 	}
 }
-
-// cleanupTestDataWithPool executes cleanup SQL statements on a specific pool (internal use)
-func cleanupTestDataWithPool(pool *pgxpool.Pool, sqlStatements ...string) {
-	if pool == nil {
-		return
-	}
-
-	ctx := context.Background()
-	for _, sql := range sqlStatements {
-		_, err := pool.Exec(ctx, sql)
-		if err != nil {
-			log.Printf("Warning: Failed to cleanup test data with SQL '%s': %v", sql, err)
-		}
-	}
-}
