@@ -111,6 +111,24 @@ db.ReadQuery(ctx, sql, args...)
 ### 2. ✅ Query-Level Hooks
 **Priority:** P0 (Must Have) - **COMPLETED**
 
+**Implementation Date:** July 16, 2025  
+**PR:** [#16](https://github.com/nhalm/pgxkit/pull/16)  
+**Branch:** `implement-hook-pool-integration`
+
+**What was implemented:**
+- **Hook pool integration**: `ConfigurePool` methods to integrate connection hooks with pgxpool configuration
+- **Dual-level hook execution**: Operation-level hooks execute during DB operations, connection-level hooks execute during pool lifecycle
+- **Hook composition**: `CombineHooks` function to merge multiple hook sets
+- **Pool configuration**: Proper integration with pgxpool's `AfterConnect` and `BeforeClose` callbacks
+- **Comprehensive testing**: Tests verify hooks execute during actual pool operations
+- **Documentation**: Extensive examples showing hook usage patterns
+
+**Key Technical Details:**
+- Connection hooks are integrated via `pgxpool.Config.AfterConnect` and `pgxpool.Config.BeforeClose`
+- Preserves existing pool callbacks while adding hook functionality
+- `Hooks.ConfigurePool(config)` method for easy integration
+- `DB.Hooks()` method exposes hook manager for advanced configuration
+
 ```go
 // Single hook API
 db.AddHook("BeforeOperation", hookFunc)
@@ -306,6 +324,7 @@ func (db *DB) HealthCheck(ctx context.Context) error
 - ✅ New DB struct and constructors
 - ✅ Hook system implementation
 - ✅ Basic query methods
+- ✅ Hook pool integration (Issue #6)
 
 ### Phase 2: Production Features (Week 3-4)
 - Graceful shutdown
