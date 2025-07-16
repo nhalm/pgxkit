@@ -53,17 +53,41 @@ func getDSNWithSearchPath(searchPath string) string {
 	if searchPath != "" {
 		dsn += "&search_path=" + searchPath
 	}
+
 	return dsn
 }
 
-// GetDSN returns the database connection string using the same POSTGRES_* environment
-// variables that Connect uses. This is useful for tools like golang-migrate
+// GetDSN returns a PostgreSQL connection string built from environment variables.
+// This is useful for integrating with external tools like golang-migrate
 // that need a connection string rather than a pgxpool.Pool.
+//
+// Environment variables used:
+//   - POSTGRES_HOST (default: "localhost")
+//   - POSTGRES_PORT (default: 5432)
+//   - POSTGRES_USER (default: "postgres")
+//   - POSTGRES_PASSWORD (default: "")
+//   - POSTGRES_DB (default: "postgres")
+//   - POSTGRES_SSLMODE (default: "disable")
+//
+// Example:
+//
+//	dsn := pgxkit.GetDSN()
+//	// Use with golang-migrate: migrate -database "$(pgxkit.GetDSN())" -path ./migrations up
 func GetDSN() string {
 	return getDSN()
 }
 
-// DB represents a database connection with read/write pool abstraction
+// DB represents a database connection with read/write pool abstraction.
+// It provides a safe-by-default approach where all operations use the write pool
+// unless explicitly using Read* methods for optimization.
+//
+// The DB supports:
+//   - Single pool mode (same pool for read/write)
+//   - Read/write split mode (separate pools for optimization)
+//   - Extensible hook system for logging, tracing, metrics
+//   - Graceful shutdown with active operation tracking
+//   - Built-in retry logic for transient failures
+//   - Health checks and connection statistics
 type DB struct {
 	readPool  *pgxpool.Pool
 	writePool *pgxpool.Pool
@@ -73,25 +97,42 @@ type DB struct {
 	activeOps sync.WaitGroup // Tracks active operations for graceful shutdown
 }
 
-// DBConfig holds configuration options for database connections
+// DBConfig holds configuration options for database connections.
+// These options are applied when creating connection pools.
 type DBConfig struct {
-	MaxConns        int32
-	MinConns        int32
-	MaxConnLifetime time.Duration
-	MaxConnIdleTime time.Duration
+	MaxConns        int32         // Maximum number of connections in the pool
+	MinConns        int32         // Minimum number of connections in the pool
+	MaxConnLifetime time.Duration // Maximum lifetime of a connection
+	MaxConnIdleTime time.Duration // Maximum idle time for a connection
 }
 
-// NewDB creates a new unconnected DB instance
-// Add hooks to this instance, then call Connect() to establish the database connection
+// NewDB creates a new unconnected DB instance.
+// Add hooks to this instance, then call Connect() to establish the database connection.
+//
+// Example:
+//
+//	db := pgxkit.NewDB()
+//	db.AddHook(pgxkit.BeforeOperation, myLoggingHook)
+//	err := db.Connect(ctx, "postgres://user:pass@localhost/db")
 func NewDB() *DB {
 	return &DB{
 		hooks: newHooks(),
 	}
 }
 
-// Connect establishes a database connection with a single pool (same pool for read/write)
+// Connect establishes a database connection with a single pool (same pool for read/write).
 // If dsn is empty, it uses environment variables to construct the connection string.
-// The hooks are configured at pool creation time for proper integration
+// The hooks are configured at pool creation time for proper integration.
+//
+// This is the recommended approach for most applications as it provides safety
+// by default while still allowing read optimization through ReadQuery methods.
+//
+// Example:
+//
+//	db := pgxkit.NewDB()
+//	err := db.Connect(ctx, "postgres://user:pass@localhost/db")
+//	// Or use environment variables:
+//	err := db.Connect(ctx, "")
 func (db *DB) Connect(ctx context.Context, dsn string) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
@@ -126,9 +167,18 @@ func (db *DB) Connect(ctx context.Context, dsn string) error {
 	return nil
 }
 
-// ConnectReadWrite establishes database connections with separate read and write pools
+// ConnectReadWrite establishes database connections with separate read and write pools.
 // If readDSN or writeDSN is empty, it uses environment variables to construct the connection string.
-// The hooks are configured at pool creation time for proper integration
+// The hooks are configured at pool creation time for proper integration.
+//
+// This is useful for applications that want to optimize read performance by routing
+// read queries to read replicas while ensuring writes go to the primary database.
+//
+// Example:
+//
+//	db := pgxkit.NewDB()
+//	err := db.ConnectReadWrite(ctx, "postgres://user:pass@read-replica/db", "postgres://user:pass@primary/db")
+//	// Now ReadQuery methods will use the read pool, while Query/Exec use the write pool
 func (db *DB) ConnectReadWrite(ctx context.Context, readDSN, writeDSN string) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
@@ -180,8 +230,8 @@ func (db *DB) ConnectReadWrite(ctx context.Context, readDSN, writeDSN string) er
 	return nil
 }
 
-// NewDBWithPool creates a new DB instance with a single pool (same pool for read/write)
-// Deprecated: Use NewDB() + Connect() instead for proper hook integration
+// NewDBWithPool creates a new DB instance with a single pool (same pool for read/write).
+// Deprecated: Use NewDB() + Connect() instead for proper hook integration.
 func NewDBWithPool(pool *pgxpool.Pool) *DB {
 	return &DB{
 		readPool:  pool,
@@ -190,8 +240,8 @@ func NewDBWithPool(pool *pgxpool.Pool) *DB {
 	}
 }
 
-// NewReadWriteDB creates a new DB instance with separate read and write pools
-// Deprecated: Use NewDB() + ConnectReadWrite() instead for proper hook integration
+// NewReadWriteDB creates a new DB instance with separate read and write pools.
+// Deprecated: Use NewDB() + ConnectReadWrite() instead for proper hook integration.
 func NewReadWriteDB(readPool, writePool *pgxpool.Pool) *DB {
 	return &DB{
 		readPool:  readPool,
@@ -200,32 +250,91 @@ func NewReadWriteDB(readPool, writePool *pgxpool.Pool) *DB {
 	}
 }
 
-// Query executes a query using the write pool (safe by default)
+// Query executes a query using the write pool (safe by default).
+// This ensures consistency by always using the primary database connection.
+// Use ReadQuery for read-only queries that can benefit from read replicas.
+//
+// Example:
+//
+//	rows, err := db.Query(ctx, "SELECT * FROM users WHERE active = $1", true)
+//	if err != nil {
+//	    return err
+//	}
+//	defer rows.Close()
 func (db *DB) Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error) {
 	return db.executeQuery(ctx, db.writePool, sql, args...)
 }
 
-// QueryRow executes a query that returns a single row using the write pool
+// QueryRow executes a query that returns a single row using the write pool.
+// This ensures consistency by always using the primary database connection.
+// Use ReadQueryRow for read-only queries that can benefit from read replicas.
+//
+// Example:
+//
+//	var userID int
+//	err := db.QueryRow(ctx, "SELECT id FROM users WHERE email = $1", email).Scan(&userID)
 func (db *DB) QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row {
 	return db.executeQueryRow(ctx, db.writePool, sql, args...)
 }
 
-// Exec executes a statement using the write pool
+// Exec executes a statement using the write pool.
+// This method is used for INSERT, UPDATE, DELETE, and other write operations.
+//
+// Example:
+//
+//	tag, err := db.Exec(ctx, "INSERT INTO users (name, email) VALUES ($1, $2)", name, email)
+//	if err != nil {
+//	    return err
+//	}
+//	fmt.Printf("Inserted %d rows\n", tag.RowsAffected())
 func (db *DB) Exec(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error) {
 	return db.executeExec(ctx, db.writePool, sql, args...)
 }
 
-// ReadQuery executes a query using the read pool (explicit optimization)
+// ReadQuery executes a query using the read pool (explicit optimization).
+// This method routes the query to read replicas when available, improving performance
+// for read-heavy workloads. Only use this for queries that can tolerate read replica lag.
+//
+// Example:
+//
+//	rows, err := db.ReadQuery(ctx, "SELECT * FROM users WHERE active = $1", true)
+//	if err != nil {
+//	    return err
+//	}
+//	defer rows.Close()
 func (db *DB) ReadQuery(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error) {
 	return db.executeQuery(ctx, db.readPool, sql, args...)
 }
 
-// ReadQueryRow executes a query that returns a single row using the read pool
+// ReadQueryRow executes a query that returns a single row using the read pool.
+// This method routes the query to read replicas when available, improving performance
+// for read-heavy workloads. Only use this for queries that can tolerate read replica lag.
+//
+// Example:
+//
+//	var count int
+//	err := db.ReadQueryRow(ctx, "SELECT COUNT(*) FROM users").Scan(&count)
 func (db *DB) ReadQueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row {
 	return db.executeQueryRow(ctx, db.readPool, sql, args...)
 }
 
-// BeginTx starts a transaction using the write pool
+// BeginTx starts a transaction using the write pool.
+// Transactions always use the write pool to ensure consistency.
+// The transaction will execute BeforeTransaction and AfterTransaction hooks.
+//
+// Example:
+//
+//	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+//	if err != nil {
+//	    return err
+//	}
+//	defer tx.Rollback(ctx) // Safe to call even after commit
+//
+//	_, err = tx.Exec(ctx, "INSERT INTO users (name) VALUES ($1)", name)
+//	if err != nil {
+//	    return err
+//	}
+//	return tx.Commit(ctx)
 func (db *DB) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error) {
 	db.mu.RLock()
 	if db.shutdown {
@@ -254,19 +363,63 @@ func (db *DB) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, err
 	return tx, err
 }
 
-// AddHook adds a hook to the database
+// AddHook adds an operation-level hook to the database.
+// Hooks are executed in the order they are added and provide extensibility
+// for logging, tracing, metrics, circuit breakers, and other cross-cutting concerns.
+//
+// Available hook types:
+//   - BeforeOperation: Called before any query/exec operation
+//   - AfterOperation: Called after any query/exec operation
+//   - BeforeTransaction: Called before starting a transaction
+//   - AfterTransaction: Called after a transaction completes
+//   - OnShutdown: Called during graceful shutdown
+//
+// Example:
+//
+//	db.AddHook(pgxkit.BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+//	    log.Printf("Executing: %s", sql)
+//	    return nil
+//	})
 func (db *DB) AddHook(hookType HookType, hookFunc HookFunc) *DB {
 	db.hooks.addHook(hookType, hookFunc)
 	return db
 }
 
-// AddConnectionHook adds a connection-level hook
+// AddConnectionHook adds a connection-level hook to the database.
+// These hooks are integrated with pgx's connection lifecycle and are useful
+// for connection setup, validation, and cleanup.
+//
+// Available hook types:
+//   - "OnConnect": Called when a new connection is established
+//   - "OnDisconnect": Called when a connection is closed
+//   - "OnAcquire": Called when a connection is acquired from the pool
+//   - "OnRelease": Called when a connection is returned to the pool
+//
+// Example:
+//
+//	db.AddConnectionHook("OnConnect", func(conn *pgx.Conn) error {
+//	    log.Println("New connection established")
+//	    return nil
+//	})
 func (db *DB) AddConnectionHook(hookType string, hookFunc interface{}) error {
 	return db.hooks.addConnectionHook(hookType, hookFunc)
 }
 
-// Shutdown gracefully shuts down the database connections
-// It waits for active operations to complete, respecting the context timeout
+// Shutdown gracefully shuts down the database connections.
+// It waits for active operations to complete, respecting the context timeout.
+// If the context times out, shutdown proceeds anyway to prevent hanging.
+//
+// The shutdown process:
+// 1. Marks the database as shutting down (new operations will fail)
+// 2. Waits for active operations to complete (respects context timeout)
+// 3. Executes OnShutdown hooks
+// 4. Closes connection pools
+//
+// Example:
+//
+//	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+//	defer cancel()
+//	err := db.Shutdown(ctx)
 func (db *DB) Shutdown(ctx context.Context) error {
 	db.mu.Lock()
 	if db.shutdown {
@@ -307,7 +460,17 @@ func (db *DB) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// Stats returns statistics for the write pool
+// Stats returns statistics for the write pool.
+// This provides information about connection usage, which is useful for monitoring
+// and debugging connection pool performance.
+//
+// Example:
+//
+//	stats := db.Stats()
+//	if stats != nil {
+//	    log.Printf("Active connections: %d", stats.AcquiredConns())
+//	    log.Printf("Idle connections: %d", stats.IdleConns())
+//	}
 func (db *DB) Stats() *pgxpool.Stat {
 	if db.writePool == nil {
 		return nil
@@ -315,7 +478,16 @@ func (db *DB) Stats() *pgxpool.Stat {
 	return db.writePool.Stat()
 }
 
-// ReadStats returns statistics for the read pool
+// ReadStats returns statistics for the read pool.
+// This provides information about read connection usage, which is useful for monitoring
+// read replica performance and connection pool health.
+//
+// Example:
+//
+//	stats := db.ReadStats()
+//	if stats != nil {
+//	    log.Printf("Read pool active connections: %d", stats.AcquiredConns())
+//	}
 func (db *DB) ReadStats() *pgxpool.Stat {
 	if db.readPool == nil {
 		return nil
@@ -323,7 +495,8 @@ func (db *DB) ReadStats() *pgxpool.Stat {
 	return db.readPool.Stat()
 }
 
-// WriteStats returns statistics for the write pool
+// WriteStats returns statistics for the write pool.
+// This is an alias for Stats() provided for consistency with ReadStats().
 func (db *DB) WriteStats() *pgxpool.Stat {
 	if db.writePool == nil {
 		return nil
@@ -331,7 +504,17 @@ func (db *DB) WriteStats() *pgxpool.Stat {
 	return db.writePool.Stat()
 }
 
-// HealthCheck performs a simple health check by pinging the database
+// HealthCheck performs a simple health check by pinging the database.
+// This is useful for health check endpoints and monitoring systems.
+// It returns an error if the database is not connected, shutting down, or unreachable.
+//
+// Example:
+//
+//	if err := db.HealthCheck(ctx); err != nil {
+//	    log.Printf("Database health check failed: %v", err)
+//	    http.Error(w, "Database unavailable", http.StatusServiceUnavailable)
+//	    return
+//	}
 func (db *DB) HealthCheck(ctx context.Context) error {
 	if ctx == nil {
 		return fmt.Errorf("context cannot be nil")
@@ -352,14 +535,30 @@ func (db *DB) HealthCheck(ctx context.Context) error {
 	return pool.Ping(ctx)
 }
 
-// IsReady checks if the database connection is ready to accept queries
+// IsReady checks if the database connection is ready to accept queries.
+// This is a convenience method that returns true if HealthCheck() succeeds.
+// It's useful for readiness probes and quick status checks.
+//
+// Example:
+//
+//	if db.IsReady(ctx) {
+//	    log.Println("Database is ready to accept queries")
+//	}
 func (db *DB) IsReady(ctx context.Context) bool {
 	return db.HealthCheck(ctx) == nil
 }
 
-// Retry methods for convenience
-
-// ExecWithRetry executes a statement using the write pool with retry logic
+// ExecWithRetry executes a statement using the write pool with retry logic.
+// This automatically retries transient failures like connection errors, deadlocks,
+// and serialization failures using exponential backoff.
+//
+// Example:
+//
+//	config := pgxkit.DefaultRetryConfig()
+//	tag, err := db.ExecWithRetry(ctx, config, "INSERT INTO users (name) VALUES ($1)", name)
+//	if err != nil {
+//	    return fmt.Errorf("failed to insert user after retries: %w", err)
+//	}
 func (db *DB) ExecWithRetry(ctx context.Context, config *RetryConfig, sql string, args ...interface{}) (pgconn.CommandTag, error) {
 	var result pgconn.CommandTag
 	err := RetryOperation(ctx, config, func(ctx context.Context) error {
@@ -370,7 +569,18 @@ func (db *DB) ExecWithRetry(ctx context.Context, config *RetryConfig, sql string
 	return result, err
 }
 
-// QueryWithRetry executes a query using the write pool with retry logic
+// QueryWithRetry executes a query using the write pool with retry logic.
+// This automatically retries transient failures like connection errors, deadlocks,
+// and serialization failures using exponential backoff.
+//
+// Example:
+//
+//	config := pgxkit.DefaultRetryConfig()
+//	rows, err := db.QueryWithRetry(ctx, config, "SELECT * FROM users WHERE active = $1", true)
+//	if err != nil {
+//	    return fmt.Errorf("failed to query users after retries: %w", err)
+//	}
+//	defer rows.Close()
 func (db *DB) QueryWithRetry(ctx context.Context, config *RetryConfig, sql string, args ...interface{}) (pgx.Rows, error) {
 	var result pgx.Rows
 	err := RetryOperation(ctx, config, func(ctx context.Context) error {
@@ -381,7 +591,16 @@ func (db *DB) QueryWithRetry(ctx context.Context, config *RetryConfig, sql strin
 	return result, err
 }
 
-// QueryRowWithRetry executes a query that returns a single row using the write pool with retry logic
+// QueryRowWithRetry executes a query that returns a single row using the write pool with retry logic.
+// This automatically retries transient failures like connection errors, deadlocks,
+// and serialization failures using exponential backoff.
+//
+// Example:
+//
+//	config := pgxkit.DefaultRetryConfig()
+//	row := db.QueryRowWithRetry(ctx, config, "SELECT id FROM users WHERE email = $1", email)
+//	var userID int
+//	err := row.Scan(&userID)
 func (db *DB) QueryRowWithRetry(ctx context.Context, config *RetryConfig, sql string, args ...interface{}) pgx.Row {
 	var result pgx.Row
 	err := RetryOperation(ctx, config, func(ctx context.Context) error {

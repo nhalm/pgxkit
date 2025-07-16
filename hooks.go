@@ -9,18 +9,44 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// HookType represents the type of hook
+// HookType represents the type of hook for operation-level hooks.
+// These hooks are executed during database operations and provide extensibility
+// for logging, tracing, metrics, circuit breakers, and other cross-cutting concerns.
 type HookType int
 
 const (
+	// BeforeOperation is called before any query/exec operation.
+	// The operationErr parameter will always be nil.
 	BeforeOperation HookType = iota
+
+	// AfterOperation is called after any query/exec operation.
+	// The operationErr parameter contains the result of the operation.
 	AfterOperation
+
+	// BeforeTransaction is called before starting a transaction.
+	// The operationErr parameter will always be nil.
 	BeforeTransaction
+
+	// AfterTransaction is called after a transaction completes.
+	// The operationErr parameter contains the result of the transaction.
 	AfterTransaction
+
+	// OnShutdown is called during graceful shutdown.
+	// The sql and args parameters will be empty, operationErr will be nil.
 	OnShutdown
 )
 
-// HookFunc is the universal hook function signature for operation-level hooks
+// HookFunc is the universal hook function signature for operation-level hooks.
+// All operation-level hooks use this signature for consistency and simplicity.
+//
+// Parameters:
+//   - ctx: The context for the operation
+//   - sql: The SQL statement being executed (empty for shutdown hooks)
+//   - args: The arguments for the SQL statement (nil for shutdown hooks)
+//   - operationErr: The error from the operation (nil for before hooks)
+//
+// The hook should return an error if it wants to abort the operation.
+// For after hooks, returning an error will not affect the original operation result.
 type HookFunc func(ctx context.Context, sql string, args []interface{}, operationErr error) error
 
 // hooks manages both operation-level and connection-level hooks
@@ -166,7 +192,9 @@ func (h *hooks) executeOnShutdown(ctx context.Context, sql string, args []interf
 	return nil
 }
 
-// ConnectionHooks manages connection lifecycle hooks
+// ConnectionHooks manages connection lifecycle hooks.
+// These hooks are integrated with pgx's connection lifecycle and are useful
+// for connection setup, validation, and cleanup. They use pgx's native function signatures.
 type ConnectionHooks struct {
 	mu           sync.RWMutex
 	onConnect    []func(*pgx.Conn) error
@@ -175,7 +203,17 @@ type ConnectionHooks struct {
 	onRelease    []func(*pgx.Conn)
 }
 
-// NewConnectionHooks creates a new connection hooks manager
+// NewConnectionHooks creates a new connection hooks manager.
+// This is used internally by the DB type but can also be used directly
+// for advanced connection pool configuration.
+//
+// Example:
+//
+//	hooks := pgxkit.NewConnectionHooks()
+//	hooks.AddOnConnect(func(conn *pgx.Conn) error {
+//	    log.Println("New connection established")
+//	    return nil
+//	})
 func NewConnectionHooks() *ConnectionHooks {
 	return &ConnectionHooks{
 		onConnect:    make([]func(*pgx.Conn) error, 0),
@@ -185,7 +223,16 @@ func NewConnectionHooks() *ConnectionHooks {
 	}
 }
 
-// AddOnConnect adds a callback that will be called when a new connection is established
+// AddOnConnect adds a callback that will be called when a new connection is established.
+// This is useful for connection initialization, setting session variables, or validation.
+// If the callback returns an error, the connection will be closed.
+//
+// Example:
+//
+//	hooks.AddOnConnect(func(conn *pgx.Conn) error {
+//	    _, err := conn.Exec(context.Background(), "SET application_name = 'myapp'")
+//	    return err
+//	})
 func (h *ConnectionHooks) AddOnConnect(fn func(*pgx.Conn) error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

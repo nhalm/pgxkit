@@ -11,13 +11,29 @@ import (
 	"testing"
 )
 
-// TestDB is just an embedded DB with 3 simple methods
+// TestDB is a testing utility that wraps DB with testing-specific functionality.
+// It provides simple methods for test setup, cleanup, and golden test support.
+// TestDB automatically manages test database connections and provides utilities
+// for performance regression testing through golden tests.
 type TestDB struct {
 	*DB
 }
 
-// NewTestDB creates a new TestDB instance using the shared test pool
-// No parameters needed - pool management is handled internally
+// NewTestDB creates a new TestDB instance using the shared test pool.
+// The test pool is automatically configured from the TEST_DATABASE_URL environment variable.
+// If no test database is available, the TestDB will have nil pools and tests should skip.
+//
+// Example:
+//
+//	func TestUserOperations(t *testing.T) {
+//	    testDB := pgxkit.NewTestDB()
+//	    err := testDB.Setup()
+//	    if err != nil {
+//	        t.Skip("Test database not available")
+//	    }
+//	    defer testDB.Clean()
+//	    // ... test code
+//	}
 func NewTestDB() *TestDB {
 	pool := getTestPool()
 	if pool == nil {
@@ -27,7 +43,17 @@ func NewTestDB() *TestDB {
 	return &TestDB{DB: NewDBWithPool(pool)}
 }
 
-// Setup prepares the database for testing
+// Setup prepares the database for testing.
+// This method verifies the database connection and can be extended
+// to run migrations, seed data, or perform other test setup tasks.
+// Returns an error if the database is not available or not ready for testing.
+//
+// Example:
+//
+//	err := testDB.Setup()
+//	if err != nil {
+//	    t.Skip("Test database not available")
+//	}
 func (tdb *TestDB) Setup() error {
 	// This method can be extended to run migrations, seed data, etc.
 	// For now, it's a placeholder that ensures the database is ready
