@@ -58,19 +58,10 @@ func TestDBHooks(t *testing.T) {
 		return nil
 	}
 
-	err := db.AddHook("BeforeOperation", testHook)
-	if err != nil {
-		t.Errorf("AddHook should not return error: %v", err)
-	}
-
-	// Test invalid hook type
-	err = db.AddHook("InvalidHook", testHook)
-	if err == nil {
-		t.Error("AddHook should return error for invalid hook type")
-	}
+	db.AddHook(BeforeOperation, testHook)
 
 	// Test hook execution
-	err = db.hooks.ExecuteBeforeOperation(context.Background(), "SELECT 1", nil, nil)
+	err := db.hooks.ExecuteBeforeOperation(context.Background(), "SELECT 1", nil, nil)
 	if err != nil {
 		t.Errorf("ExecuteBeforeOperation should not return error: %v", err)
 	}

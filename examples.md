@@ -1,5 +1,22 @@
 # pgxkit Usage Examples
 
+## Basic Hook Usage
+
+```go
+// Simple fluent chaining - no error handling needed!
+db := pgxkit.NewDB().
+    AddHook(pgxkit.BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        log.Printf("Executing query: %s", sql)
+        return nil
+    }).
+    AddHook(pgxkit.AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        if operationErr != nil {
+            log.Printf("Query failed: %v", operationErr)
+        }
+        return nil
+    })
+```
+
 ## Basic Usage with Connect() Pattern
 
 ```go
@@ -19,13 +36,10 @@ func main() {
     db := pgxkit.NewDB()
     
     // 2. Add hooks BEFORE connecting (hooks will be integrated during connection)
-    err := db.AddHook("BeforeOperation", func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+    db = db.AddHook(pgxkit.BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
         log.Printf("Executing query: %s", sql)
         return nil
     })
-    if err != nil {
-        log.Fatal(err)
-    }
     
     // Add connection-level hooks that will execute during pool lifecycle
     err = db.AddConnectionHook("OnConnect", func(conn *pgx.Conn) error {
@@ -82,13 +96,13 @@ func main() {
     db := pgxkit.NewDB()
     
     // 2. Add hooks BEFORE connecting
-    db.AddHook("BeforeOperation", func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+    db.AddHook(pgxkit.BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
         start := time.Now()
         ctx = context.WithValue(ctx, "start_time", start)
         return nil
     })
     
-    db.AddHook("AfterOperation", func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+    db.AddHook(pgxkit.AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
         if start, ok := ctx.Value("start_time").(time.Time); ok {
             duration := time.Since(start)
             log.Printf("Query took %v: %s", duration, sql)
@@ -141,12 +155,12 @@ func main() {
     db := pgxkit.NewDB()
     
     // Add operation-level hooks
-    db.AddHook("BeforeOperation", func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+    db.AddHook(pgxkit.BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
         log.Printf("Starting query: %s", sql)
         return nil
     })
     
-    db.AddHook("AfterOperation", func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+    db.AddHook(pgxkit.AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
         if operationErr != nil {
             log.Printf("Query failed: %v", operationErr)
         } else {
@@ -155,12 +169,12 @@ func main() {
         return nil
     })
     
-    db.AddHook("BeforeTransaction", func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+    db.AddHook(pgxkit.BeforeTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
         log.Printf("Starting transaction")
         return nil
     })
     
-    db.AddHook("AfterTransaction", func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+    db.AddHook(pgxkit.AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
         if operationErr != nil {
             log.Printf("Transaction failed: %v", operationErr)
         } else {
@@ -242,3 +256,57 @@ func main() {
 - `OnDisconnect` - Executed when a connection is closed
 - `OnAcquire` - Executed when a connection is acquired from the pool
 - `OnRelease` - Executed when a connection is released back to the pool
+
+### Fluent Hook Composition
+
+```go
+// Define your hook functions separately for reusability
+func logQueryStart(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+    log.Printf("Executing: %s", sql)
+    return nil
+}
+
+func logQueryEnd(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+    if operationErr != nil {
+        log.Printf("Query failed: %v", operationErr)
+    } else {
+        log.Printf("Query completed successfully")
+    }
+    return nil
+}
+
+func traceQuery(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+    // Add tracing logic
+    return nil
+}
+
+func validateQuery(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+    // Add validation logic
+    return nil
+}
+
+// Chain hooks fluently - just like router middleware!
+db := pgxkit.NewDB().
+    AddHook(pgxkit.BeforeOperation, logQueryStart).
+    AddHook(pgxkit.BeforeOperation, traceQuery).
+    AddHook(pgxkit.BeforeOperation, validateQuery).
+    AddHook(pgxkit.AfterOperation, logQueryEnd)
+```
+
+### Transaction Hooks
+
+```go
+db.AddHook(pgxkit.BeforeTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+    log.Println("Starting transaction")
+    return nil
+})
+
+db.AddHook(pgxkit.AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+    if operationErr != nil {
+        log.Printf("Transaction failed: %v", operationErr)
+    } else {
+        log.Println("Transaction completed successfully")
+    }
+    return nil
+})
+```
