@@ -5,32 +5,23 @@ import (
 	"log"
 	"os"
 	"sync"
+	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var (
-	// Shared test database connection for all integration tests
+	// Shared test database pool for all integration tests
 	testDBPool *pgxpool.Pool
 	testDBOnce sync.Once
 )
 
-// GetTestConnection returns a shared test database connection, initializing it once
-// This is a generic function that must be called with the appropriate type parameter
-func GetTestConnection[T Querier](newQueriesFunc func(*pgxpool.Pool) T) *Connection[T] {
+// GetTestPool returns a shared test database pool, initializing it once
+func GetTestPool() *pgxpool.Pool {
 	testDBOnce.Do(func() {
 		testDBPool = initTestDatabasePool()
 	})
-
-	if testDBPool == nil {
-		return nil
-	}
-
-	return &Connection[T]{
-		pool:    testDBPool,
-		queries: newQueriesFunc(testDBPool),
-		metrics: nil,
-	}
+	return testDBPool
 }
 
 // initTestDatabasePool sets up the test database pool once
@@ -66,35 +57,26 @@ func initTestDatabasePool() *pgxpool.Pool {
 	return pool
 }
 
-// CleanupTestData executes cleanup SQL statements
-// This is a generic cleanup utility that takes SQL statements as parameters
-func CleanupTestData[T Querier](conn *Connection[T], sqlStatements ...string) {
-	if conn == nil {
+// RequireTestPool ensures a test database pool is available or skips the test
+func RequireTestPool(t *testing.T) *pgxpool.Pool {
+	pool := GetTestPool()
+	if pool == nil {
+		t.Skip("TEST_DATABASE_URL not set, skipping integration test")
+	}
+	return pool
+}
+
+// CleanupTestData executes cleanup SQL statements on a pool
+func CleanupTestData(pool *pgxpool.Pool, sqlStatements ...string) {
+	if pool == nil {
 		return
 	}
 
 	ctx := context.Background()
-	pool := conn.GetDB()
-
 	for _, sql := range sqlStatements {
 		_, err := pool.Exec(ctx, sql)
 		if err != nil {
 			log.Printf("Warning: Failed to cleanup test data with SQL '%s': %v", sql, err)
 		}
 	}
-}
-
-// RequireTestDB ensures a test database is available or skips the test
-func RequireTestDB[T Querier](t TestingT, newQueriesFunc func(*pgxpool.Pool) T) *Connection[T] {
-	conn := GetTestConnection(newQueriesFunc)
-	if conn == nil {
-		t.Skip("TEST_DATABASE_URL not set, skipping integration test")
-	}
-	return conn
-}
-
-// TestingT is an interface that matches both *testing.T and *testing.B
-type TestingT interface {
-	Skip(args ...interface{})
-	Logf(format string, args ...interface{})
 }
