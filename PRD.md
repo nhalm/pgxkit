@@ -524,6 +524,43 @@ func (db *DB) HealthCheck(ctx context.Context) error
 - **Before**: 78+ tests across multiple files with significant overlap
 - **After**: ~50 focused tests covering v2.0 architecture without redundancy
 
+## ✅ COMPLETED: Minimal Test Coverage and Performance Monitoring (Issue #12)
+
+**Implementation Date:** January 2025  
+**PR:** TBD  
+**Branch:** `minimal-test-improvements-issue-12`
+
+**What was implemented:**
+- **Performance Benchmarks**: Added `benchmark_test.go` with focused tests for hook execution overhead
+- **Test Coverage Reporting**: Integrated Codecov into CI pipeline for coverage tracking
+- **Performance Regression Detection**: Enhanced golden tests to capture execution timing
+- **Benchmark CI Workflow**: Added automated performance regression detection in PRs
+
+**Key Technical Details:**
+- Hook overhead benchmarks validate <1ms requirement
+- Golden tests now capture `ExecutionMS` and `PlanningMS` for performance regression detection
+- Minimal implementation focuses on high-value, low-maintenance testing
+- Avoided over-engineering extensive test suites that don't provide proportional value
+
+**Rationale for Minimal Approach:**
+- Existing test coverage is already comprehensive (>50 focused tests)
+- Core features are complete and well-tested
+- Extensive benchmarks would create maintenance burden without proportional benefit
+- Performance optimization should be data-driven based on real usage patterns
+
+**Files Created/Modified:**
+- `benchmark_test.go` - Performance benchmarks for hook overhead and pool operations
+- `.github/workflows/ci.yml` - Added test coverage reporting
+- `.github/workflows/benchmark.yml` - Performance regression detection workflow
+- `test_db.go` - Enhanced golden tests with timing information
+
+**All Essential Requirements Met:**
+- ✅ Hook execution overhead monitoring (<1ms validation)
+- ✅ Test coverage reporting integrated into CI
+- ✅ Performance regression detection via golden tests
+- ✅ Automated benchmarking in CI/CD pipeline
+- ✅ Focused on high-value, low-maintenance testing approach
+
 ## Open Questions
 
 1. **Hook Type Validation** - Should we validate hook function signatures at runtime or compile time?
