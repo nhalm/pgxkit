@@ -42,32 +42,27 @@ Key metrics to monitor:
 
 ```go
 func optimizeConnectionPool() *pgxkit.DB {
-    config, err := pgxpool.ParseConfig(pgxkit.GetDSN())
-    if err != nil {
-        log.Fatal(err)
-    }
-    
-    // Calculate optimal pool size
+    // Calculate optimal pool size based on workload
     cpuCores := runtime.NumCPU()
     
     // For CPU-bound workloads: 1-2 connections per core
     // For I/O-bound workloads: 2-4 connections per core
-    maxConns := int32(cpuCores * 3)
+    maxConns := cpuCores * 3
     
-    config.MaxConns = maxConns
-    config.MinConns = maxConns / 4  // Keep 25% as minimum
+    // Configure DSN with connection pool parameters
+    dsn := fmt.Sprintf("%s?pool_max_conns=%d&pool_min_conns=%d&pool_max_conn_lifetime=1h&pool_max_conn_idle_time=30m&pool_health_check_period=1m",
+        pgxkit.GetDSN(),
+        maxConns,
+        maxConns/4, // Keep 25% as minimum
+    )
     
-    // Connection lifecycle settings
-    config.MaxConnLifetime = 1 * time.Hour      // Rotate connections
-    config.MaxConnIdleTime = 30 * time.Minute   // Close idle connections
-    config.HealthCheckPeriod = 1 * time.Minute  // Regular health checks
-    
-    pool, err := pgxpool.NewWithConfig(context.Background(), config)
+    db := pgxkit.NewDB()
+    err := db.Connect(context.Background(), dsn)
     if err != nil {
         log.Fatal(err)
     }
     
-    return pgxkit.NewDB(pool)
+    return db
 }
 ```
 
@@ -146,7 +141,7 @@ func (apm *AdaptivePoolManager) adjustPoolSize() {
             newSize = apm.maxConns
         }
         log.Printf("Scaling up pool size to %d (utilization: %.2f%%)", newSize, utilization*100)
-        // Note: Actual implementation would require pool reconfiguration
+        // Note: Actual implementation would require reconnecting with new DSN parameters
     } else if utilization < apm.scaleDownThreshold && stats.MaxConns() > apm.minConns {
         // Scale down
         newSize := int32(float64(stats.MaxConns()) * 0.8)
@@ -154,7 +149,7 @@ func (apm *AdaptivePoolManager) adjustPoolSize() {
             newSize = apm.minConns
         }
         log.Printf("Scaling down pool size to %d (utilization: %.2f%%)", newSize, utilization*100)
-        // Note: Actual implementation would require pool reconfiguration
+        // Note: Actual implementation would require reconnecting with new DSN parameters
     }
 }
 ```
@@ -360,35 +355,20 @@ func getCachedUser(db *pgxkit.DB, cache *QueryCache, userID int) (*User, error) 
 ```go
 func createOptimizedReadWriteDB() *pgxkit.DB {
     // Write pool configuration (smaller, optimized for consistency)
-    writeConfig, err := pgxpool.ParseConfig(getWriteDSN())
-    if err != nil {
-        log.Fatal(err)
-    }
-    writeConfig.MaxConns = 20
-    writeConfig.MinConns = 5
-    writeConfig.MaxConnLifetime = 2 * time.Hour
-    
-    writePool, err := pgxpool.NewWithConfig(context.Background(), writeConfig)
-    if err != nil {
-        log.Fatal(err)
-    }
+    writeDSN := fmt.Sprintf("%s?pool_max_conns=20&pool_min_conns=5&pool_max_conn_lifetime=2h",
+        getWriteDSN())
     
     // Read pool configuration (larger, optimized for throughput)
-    readConfig, err := pgxpool.ParseConfig(getReadDSN())
-    if err != nil {
-        log.Fatal(err)
-    }
-    readConfig.MaxConns = 50  // More connections for read workload
-    readConfig.MinConns = 10
-    readConfig.MaxConnLifetime = 1 * time.Hour
-    readConfig.MaxConnIdleTime = 15 * time.Minute  // Shorter idle time
+    readDSN := fmt.Sprintf("%s?pool_max_conns=50&pool_min_conns=10&pool_max_conn_lifetime=1h&pool_max_conn_idle_time=15m",
+        getReadDSN())
     
-    readPool, err := pgxpool.NewWithConfig(context.Background(), readConfig)
+    db := pgxkit.NewDB()
+    err := db.ConnectReadWrite(context.Background(), readDSN, writeDSN)
     if err != nil {
         log.Fatal(err)
     }
     
-    return pgxkit.NewReadWriteDB(readPool, writePool)
+    return db
 }
 ```
 
