@@ -261,28 +261,6 @@ func (h *ConnectionHooks) ExecuteOnRelease(conn *pgx.Conn) {
 
 // Common hook functions for typical use cases
 
-// MetricsHook creates a hook that records connection metrics.
-// Note: Duration tracking for acquire/release is not implemented in hooks as it requires
-// pool-level instrumentation. Use Connection.WithMetrics() for comprehensive metrics.
-func MetricsHook(metrics MetricsCollector) *ConnectionHooks {
-	hooks := NewConnectionHooks()
-
-	if metrics != nil {
-		hooks.AddOnAcquire(func(ctx context.Context, conn *pgx.Conn) error {
-			// Record connection acquisition (duration tracking requires pool-level instrumentation)
-			metrics.RecordConnectionAcquired(0)
-			return nil
-		})
-
-		hooks.AddOnRelease(func(conn *pgx.Conn) {
-			// Record connection release (duration tracking requires pool-level instrumentation)
-			metrics.RecordConnectionReleased(0)
-		})
-	}
-
-	return hooks
-}
-
 // ValidationHook creates a hook that validates connections
 func ValidationHook() *ConnectionHooks {
 	hooks := NewConnectionHooks()
