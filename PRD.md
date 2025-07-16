@@ -301,22 +301,22 @@ func (db *DB) HealthCheck(ctx context.Context) error
 - **Documentation Coverage** - All public APIs documented
 
 ### User Experience Metrics
-- **Migration Ease** - Clear migration path from v1.x
+- **Clean Architecture** - Fresh start with v2.0 design
 - **Setup Time** - <5 minutes to working application
 - **Feature Discovery** - Comprehensive examples and docs
 
-## Migration Strategy
+## Implementation Strategy
 
-### Breaking Changes
-- Remove all sqlc-specific interfaces
-- New constructor functions
-- Changed hook API
+### Clean Slate Approach
+- Complete rewrite with new architecture
+- No legacy support or backward compatibility
+- Fresh start with v2.0 design principles
 
-### Migration Path
-1. **Documentation** - Comprehensive migration guide
-2. **Examples** - Before/after code samples
-3. **Tooling** - Migration scripts where possible
-4. **Support** - Active issue resolution during migration period
+### Development Approach
+1. **Test-Driven** - Comprehensive test coverage from the start
+2. **Documentation** - Clear examples and API documentation
+3. **Quality Focus** - Production-ready implementation
+4. **Iterative Development** - Implement core features first, then extend
 
 ## Timeline
 
@@ -337,7 +337,7 @@ func (db *DB) HealthCheck(ctx context.Context) error
 - Documentation and examples
 
 ### Phase 4: Release (Week 7)
-- Migration guide
+- Implementation guide
 - Release notes
 - Community announcement
 
@@ -349,7 +349,7 @@ func (db *DB) HealthCheck(ctx context.Context) error
 - **Memory Leaks** - Mitigation: Proper resource management and testing
 
 ### Adoption Risks
-- **Breaking Changes** - Mitigation: Clear migration path and documentation
+- **Breaking Changes** - Mitigation: Clear documentation and examples for new API
 - **Feature Gaps** - Mitigation: Comprehensive feature comparison with v1.x
 - **Community Resistance** - Mitigation: Early feedback and transparent communication
 
@@ -365,7 +365,7 @@ func (db *DB) HealthCheck(ctx context.Context) error
 - [x] Performance overhead <1ms for hooks
 - [ ] Golden test support for query plan regression testing
 - [x] Graceful shutdown with configurable timeouts
-- [ ] Migration guide with working examples
+- [ ] Implementation guide with working examples
 
 ### Could Have
 - [ ] Built-in metrics collection
@@ -379,7 +379,7 @@ func (db *DB) HealthCheck(ctx context.Context) error
 2. **Metrics Interface** - Should we define a metrics interface or use a specific library?
 3. **Transaction Hooks** - How should transaction-level hooks interact with operation-level hooks?
 4. **Golden Test Format** - JSON or text format for EXPLAIN plan storage?
-5. **Backward Compatibility** - Should we provide any compatibility layer for v1.x users?
+5. **API Design** - Should we add any additional convenience methods or utilities?
 6. **Hook Performance** - Should we provide a way to disable hooks in production for maximum performance?
 
 ## Implementation Details
@@ -547,7 +547,7 @@ func RequireTestDB(t *testing.T) *TestDB  // Skips if no test DB available
 ### API Documentation
 - [ ] Comprehensive godoc for all public APIs
 - [ ] Code examples for each major feature
-- [ ] Migration guide from v1.x to v2.0
+- [ ] Implementation guide for v2.0 architecture
 
 ### User Guides
 - [ ] Quick start guide (5-minute setup)
