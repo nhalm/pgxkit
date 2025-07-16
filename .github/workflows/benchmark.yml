@@ -1,0 +1,54 @@
+name: Benchmark
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+
+jobs:
+  benchmark:
+    name: Performance Regression Check
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: testdb
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.23'
+    
+    - name: Run benchmarks
+      run: go test -bench=. -benchmem -run=^$ ./...
+      env:
+        TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/testdb?sslmode=disable
+    
+    - name: Run hook overhead benchmark
+      run: |
+        echo "## Hook Overhead Benchmark" >> $GITHUB_STEP_SUMMARY
+        go test -bench=BenchmarkHookOverhead -benchmem -run=^$ ./... | tee -a $GITHUB_STEP_SUMMARY
+      env:
+        TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/testdb?sslmode=disable
+    
+    - name: Run pool operations benchmark
+      run: |
+        echo "## Pool Operations Benchmark" >> $GITHUB_STEP_SUMMARY
+        go test -bench=BenchmarkPoolOperations -benchmem -run=^$ ./... | tee -a $GITHUB_STEP_SUMMARY
+      env:
+        TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/testdb?sslmode=disable 
