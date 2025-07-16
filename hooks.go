@@ -23,8 +23,8 @@ const (
 // HookFunc is the universal hook function signature for operation-level hooks
 type HookFunc func(ctx context.Context, sql string, args []interface{}, operationErr error) error
 
-// Hooks manages both operation-level and connection-level hooks
-type Hooks struct {
+// hooks manages both operation-level and connection-level hooks
+type hooks struct {
 	mu sync.RWMutex
 
 	// Operation-level hooks
@@ -38,9 +38,9 @@ type Hooks struct {
 	connectionHooks *ConnectionHooks
 }
 
-// NewHooks creates a new Hooks manager
-func NewHooks() *Hooks {
-	return &Hooks{
+// newHooks creates a new hooks manager
+func newHooks() *hooks {
+	return &hooks{
 		beforeOperation:   make([]HookFunc, 0),
 		afterOperation:    make([]HookFunc, 0),
 		beforeTransaction: make([]HookFunc, 0),
@@ -51,7 +51,7 @@ func NewHooks() *Hooks {
 }
 
 // AddHook adds an operation-level hook
-func (h *Hooks) AddHook(hookType HookType, hookFunc HookFunc) {
+func (h *hooks) addHook(hookType HookType, hookFunc HookFunc) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -70,7 +70,7 @@ func (h *Hooks) AddHook(hookType HookType, hookFunc HookFunc) {
 }
 
 // AddConnectionHook adds a connection-level hook
-func (h *Hooks) AddConnectionHook(hookType string, hookFunc interface{}) error {
+func (h *hooks) addConnectionHook(hookType string, hookFunc interface{}) error {
 	switch hookType {
 	case "OnConnect":
 		if fn, ok := hookFunc.(func(*pgx.Conn) error); ok {
@@ -102,7 +102,7 @@ func (h *Hooks) AddConnectionHook(hookType string, hookFunc interface{}) error {
 }
 
 // ExecuteBeforeOperation executes all BeforeOperation hooks
-func (h *Hooks) ExecuteBeforeOperation(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+func (h *hooks) executeBeforeOperation(ctx context.Context, sql string, args []interface{}, operationErr error) error {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -115,7 +115,7 @@ func (h *Hooks) ExecuteBeforeOperation(ctx context.Context, sql string, args []i
 }
 
 // ExecuteAfterOperation executes all AfterOperation hooks
-func (h *Hooks) ExecuteAfterOperation(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+func (h *hooks) executeAfterOperation(ctx context.Context, sql string, args []interface{}, operationErr error) error {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -128,7 +128,7 @@ func (h *Hooks) ExecuteAfterOperation(ctx context.Context, sql string, args []in
 }
 
 // ExecuteBeforeTransaction executes all BeforeTransaction hooks
-func (h *Hooks) ExecuteBeforeTransaction(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+func (h *hooks) executeBeforeTransaction(ctx context.Context, sql string, args []interface{}, operationErr error) error {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -141,7 +141,7 @@ func (h *Hooks) ExecuteBeforeTransaction(ctx context.Context, sql string, args [
 }
 
 // ExecuteAfterTransaction executes all AfterTransaction hooks
-func (h *Hooks) ExecuteAfterTransaction(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+func (h *hooks) executeAfterTransaction(ctx context.Context, sql string, args []interface{}, operationErr error) error {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -154,7 +154,7 @@ func (h *Hooks) ExecuteAfterTransaction(ctx context.Context, sql string, args []
 }
 
 // ExecuteOnShutdown executes all OnShutdown hooks
-func (h *Hooks) ExecuteOnShutdown(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+func (h *hooks) executeOnShutdown(ctx context.Context, sql string, args []interface{}, operationErr error) error {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -379,13 +379,13 @@ func CombineHooks(hooksList ...*ConnectionHooks) *ConnectionHooks {
 }
 
 // GetConnectionHooks returns the connection hooks for integration with pgxpool
-func (h *Hooks) GetConnectionHooks() *ConnectionHooks {
+func (h *hooks) getConnectionHooks() *ConnectionHooks {
 	return h.connectionHooks
 }
 
 // ConfigurePool configures a pgxpool.Config with the connection hooks
 // This allows the hooks to be properly integrated with the pool lifecycle
-func (h *Hooks) ConfigurePool(config *pgxpool.Config) {
+func (h *hooks) configurePool(config *pgxpool.Config) {
 	h.connectionHooks.ConfigurePool(config)
 }
 
