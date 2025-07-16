@@ -9,8 +9,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // TestDB is just an embedded DB with 3 simple methods
@@ -18,8 +16,14 @@ type TestDB struct {
 	*DB
 }
 
-// NewTestDB creates a new TestDB instance with the provided pool
-func NewTestDB(pool *pgxpool.Pool) *TestDB {
+// NewTestDB creates a new TestDB instance using the shared test pool
+// No parameters needed - pool management is handled internally
+func NewTestDB() *TestDB {
+	pool := getTestPool()
+	if pool == nil {
+		// Return a TestDB with nil pools - tests will handle the skip
+		return &TestDB{DB: NewDBWithPool(nil)}
+	}
 	return &TestDB{DB: NewDBWithPool(pool)}
 }
 
@@ -279,13 +283,11 @@ func (db *DB) AssertGolden(t *testing.T, testName string) {
 
 // RequireDB ensures a test database is available or skips the test
 func RequireDB(t *testing.T) *TestDB {
-	pool := GetTestPool()
-	if pool == nil {
+	testDB := NewTestDB()
+	if testDB.writePool == nil {
 		t.Skip("TEST_DATABASE_URL not set, skipping test")
 		return nil
 	}
-
-	testDB := NewTestDB(pool)
 	return testDB
 }
 
