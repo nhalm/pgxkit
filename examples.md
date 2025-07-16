@@ -840,3 +840,293 @@ The package uses these environment variables with sensible defaults:
 ✅ **Retry logic**: Automatic retry for transient database failures
 ✅ **Read/write splitting**: Separate connections for read and write operations
 ✅ **Query logging**: Comprehensive logging and tracing capabilities
+
+## Hook System Examples
+
+### Basic Hook Usage with DB Type
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "time"
+
+    "github.com/jackc/pgx/v5/pgxpool"
+    "github.com/nhalm/pgxkit"
+)
+
+func main() {
+    ctx := context.Background()
+    
+    // Create a pool configuration
+    config, err := pgxpool.ParseConfig("postgres://user:password@localhost/dbname")
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // Create DB instance
+    db := pgxkit.NewDB(nil) // We'll configure the pool with hooks
+    
+    // Add operation-level hooks
+    err = db.AddHook("BeforeOperation", func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        log.Printf("Executing query: %s", sql)
+        return nil
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    err = db.AddHook("AfterOperation", func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        if operationErr != nil {
+            log.Printf("Query failed: %s, error: %v", sql, operationErr)
+        } else {
+            log.Printf("Query succeeded: %s", sql)
+        }
+        return nil
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // Add connection-level hooks
+    err = db.AddConnectionHook("OnConnect", func(conn *pgx.Conn) error {
+        log.Printf("New connection established: PID %d", conn.PgConn().PID())
+        // Set connection-specific settings
+        _, err := conn.Exec(context.Background(), "SET application_name = 'myapp'")
+        return err
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    err = db.AddConnectionHook("OnDisconnect", func(conn *pgx.Conn) {
+        log.Printf("Connection closed: PID %d", conn.PgConn().PID())
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // Configure the pool with hooks - this is the key integration step!
+    db.Hooks().ConfigurePool(config)
+    
+    // Now create the pool with the configured hooks
+    pool, err := pgxpool.NewWithConfig(ctx, config)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer pool.Close()
+    
+    // Create a new DB instance with the configured pool
+    db = pgxkit.NewDB(pool)
+    
+    // Copy the hooks to the new DB instance
+    db.hooks = hooks // You would need to expose this or create a method
+    
+    // Now all operations will trigger both operation and connection hooks
+    rows, err := db.Query(ctx, "SELECT 1")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer rows.Close()
+}
+```
+
+### Advanced Hook Integration Pattern
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "time"
+
+    "github.com/jackc/pgx/v5/pgxpool"
+    "github.com/nhalm/pgxkit"
+)
+
+// CreateDBWithHooks creates a DB instance with hooks properly integrated
+func CreateDBWithHooks(ctx context.Context, connString string) (*pgxkit.DB, error) {
+    // Parse the connection string
+    config, err := pgxpool.ParseConfig(connString)
+    if err != nil {
+        return nil, err
+    }
+    
+    // Create hooks
+    hooks := pgxkit.NewHooks()
+    
+    // Add operation-level hooks
+    hooks.AddHook("BeforeOperation", func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        log.Printf("[%s] Executing: %s", time.Now().Format("15:04:05"), sql)
+        return nil
+    })
+    
+    hooks.AddHook("AfterOperation", func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        if operationErr != nil {
+            log.Printf("[%s] Query failed: %v", time.Now().Format("15:04:05"), operationErr)
+        }
+        return nil
+    })
+    
+    // Add connection-level hooks
+    hooks.AddConnectionHook("OnConnect", func(conn *pgx.Conn) error {
+        log.Printf("[%s] Connection established: PID %d", time.Now().Format("15:04:05"), conn.PgConn().PID())
+        return nil
+    })
+    
+    hooks.AddConnectionHook("OnDisconnect", func(conn *pgx.Conn) {
+        log.Printf("[%s] Connection closed: PID %d", time.Now().Format("15:04:05"), conn.PgConn().PID())
+    })
+    
+    // Configure pool with hooks
+    hooks.ConfigurePool(config)
+    
+    // Create pool
+    pool, err := pgxpool.NewWithConfig(ctx, config)
+    if err != nil {
+        return nil, err
+    }
+    
+    // Create DB with the configured pool
+    db := pgxkit.NewDB(pool)
+    
+    // The hooks are already integrated with the pool, so connection-level hooks will work
+    // Operation-level hooks are handled by the DB methods
+    
+    return db, nil
+}
+
+func main() {
+    ctx := context.Background()
+    
+    db, err := CreateDBWithHooks(ctx, "postgres://user:password@localhost/dbname")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer db.Shutdown(ctx)
+    
+    // All operations will trigger hooks
+    rows, err := db.Query(ctx, "SELECT * FROM users LIMIT 10")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer rows.Close()
+    
+    // Read operations also trigger hooks
+    rows, err = db.ReadQuery(ctx, "SELECT COUNT(*) FROM users")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer rows.Close()
+}
+```
+
+### Hook Composition and Reuse
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "time"
+
+    "github.com/jackc/pgx/v5/pgxpool"
+    "github.com/nhalm/pgxkit"
+)
+
+// CreateLoggingHooks creates hooks for logging
+func CreateLoggingHooks() *pgxkit.ConnectionHooks {
+    hooks := pgxkit.NewConnectionHooks()
+    
+    hooks.AddOnConnect(func(conn *pgx.Conn) error {
+        log.Printf("📝 Connection established: PID %d", conn.PgConn().PID())
+        return nil
+    })
+    
+    hooks.AddOnDisconnect(func(conn *pgx.Conn) {
+        log.Printf("📝 Connection closed: PID %d", conn.PgConn().PID())
+    })
+    
+    return hooks
+}
+
+// CreateMetricsHooks creates hooks for metrics collection
+func CreateMetricsHooks() *pgxkit.ConnectionHooks {
+    hooks := pgxkit.NewConnectionHooks()
+    
+    hooks.AddOnAcquire(func(ctx context.Context, conn *pgx.Conn) error {
+        log.Printf("📊 Connection acquired: PID %d", conn.PgConn().PID())
+        return nil
+    })
+    
+    hooks.AddOnRelease(func(conn *pgx.Conn) {
+        log.Printf("📊 Connection released: PID %d", conn.PgConn().PID())
+    })
+    
+    return hooks
+}
+
+// CreateValidationHooks creates hooks for connection validation
+func CreateValidationHooks() *pgxkit.ConnectionHooks {
+    hooks := pgxkit.NewConnectionHooks()
+    
+    hooks.AddOnConnect(func(conn *pgx.Conn) error {
+        // Validate connection
+        _, err := conn.Exec(context.Background(), "SELECT 1")
+        if err != nil {
+            log.Printf("❌ Connection validation failed: %v", err)
+            return err
+        }
+        log.Printf("✅ Connection validated: PID %d", conn.PgConn().PID())
+        return nil
+    })
+    
+    return hooks
+}
+
+func main() {
+    ctx := context.Background()
+    
+    // Create and combine multiple hook sets
+    loggingHooks := CreateLoggingHooks()
+    metricsHooks := CreateMetricsHooks()
+    validationHooks := CreateValidationHooks()
+    
+    // Combine all hooks
+    combinedHooks := pgxkit.CombineHooks(loggingHooks, metricsHooks, validationHooks)
+    
+    // Configure pool with combined hooks
+    config, err := pgxpool.ParseConfig("postgres://user:password@localhost/dbname")
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    combinedHooks.ConfigurePool(config)
+    
+    // Create pool and DB
+    pool, err := pgxpool.NewWithConfig(ctx, config)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer pool.Close()
+    
+    db := pgxkit.NewDB(pool)
+    
+    // Add operation-level hooks
+    db.AddHook("BeforeOperation", func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        log.Printf("🔍 Executing: %s", sql)
+        return nil
+    })
+    
+    // Now all operations will trigger all hooks
+    rows, err := db.Query(ctx, "SELECT 1")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer rows.Close()
+}
+```

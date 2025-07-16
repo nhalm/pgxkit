@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // HookFunc is the universal hook function signature for operation-level hooks
@@ -368,4 +369,55 @@ func CombineHooks(hooksList ...*ConnectionHooks) *ConnectionHooks {
 	}
 
 	return combined
+}
+
+// GetConnectionHooks returns the connection hooks for integration with pgxpool
+func (h *Hooks) GetConnectionHooks() *ConnectionHooks {
+	return h.connectionHooks
+}
+
+// ConfigurePool configures a pgxpool.Config with the connection hooks
+// This allows the hooks to be properly integrated with the pool lifecycle
+func (h *Hooks) ConfigurePool(config *pgxpool.Config) {
+	h.connectionHooks.ConfigurePool(config)
+}
+
+// ConfigurePool configures a pgxpool.Config with the connection hooks
+// This integrates the hooks with the actual pool lifecycle events
+func (ch *ConnectionHooks) ConfigurePool(config *pgxpool.Config) {
+	// Store original callbacks if they exist
+	originalAfterConnect := config.AfterConnect
+	originalBeforeClose := config.BeforeClose
+
+	// Set up AfterConnect hook that combines original callback with our hooks
+	config.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		// Execute original callback first
+		if originalAfterConnect != nil {
+			if err := originalAfterConnect(ctx, conn); err != nil {
+				return err
+			}
+		}
+
+		// Execute our OnConnect hooks
+		if err := ch.ExecuteOnConnect(conn); err != nil {
+			return err
+		}
+
+		// Execute our OnAcquire hooks
+		return ch.ExecuteOnAcquire(ctx, conn)
+	}
+
+	// Set up BeforeClose hook that combines original callback with our hooks
+	config.BeforeClose = func(conn *pgx.Conn) {
+		// Execute our OnDisconnect hooks first
+		ch.ExecuteOnDisconnect(conn)
+
+		// Execute our OnRelease hooks
+		ch.ExecuteOnRelease(conn)
+
+		// Execute original callback last
+		if originalBeforeClose != nil {
+			originalBeforeClose(conn)
+		}
+	}
 }
