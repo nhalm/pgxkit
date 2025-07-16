@@ -131,9 +131,11 @@ type goldenTestHook struct {
 
 // QueryPlan represents a captured query and its EXPLAIN plan
 type QueryPlan struct {
-	Query int                      `json:"query"`
-	SQL   string                   `json:"sql"`
-	Plan  []map[string]interface{} `json:"plan"`
+	Query       int                      `json:"query"`
+	SQL         string                   `json:"sql"`
+	Plan        []map[string]interface{} `json:"plan"`
+	ExecutionMS float64                  `json:"execution_ms,omitempty"`
+	PlanningMS  float64                  `json:"planning_ms,omitempty"`
 }
 
 // captureExplainPlan captures EXPLAIN (ANALYZE, BUFFERS) plans for queries
@@ -188,11 +190,26 @@ func (g *goldenTestHook) captureExplainPlan(ctx context.Context, sql string, arg
 		return nil
 	}
 
+	// Extract timing information for performance regression detection
+	var executionTime, planningTime float64
+	if len(explainData) > 0 {
+		if planData, ok := explainData[0]["Plan"].(map[string]interface{}); ok {
+			if execTime, ok := planData["Actual Total Time"].(float64); ok {
+				executionTime = execTime
+			}
+		}
+		if planTime, ok := explainData[0]["Planning Time"].(float64); ok {
+			planningTime = planTime
+		}
+	}
+
 	// Create query plan entry
 	queryPlan := QueryPlan{
-		Query: currentQuery,
-		SQL:   sql,
-		Plan:  explainData,
+		Query:       currentQuery,
+		SQL:         sql,
+		Plan:        explainData,
+		ExecutionMS: executionTime,
+		PlanningMS:  planningTime,
 	}
 
 	// Append to golden file
