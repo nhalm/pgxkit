@@ -61,7 +61,7 @@ func TestDBHooks(t *testing.T) {
 	db.AddHook(BeforeOperation, testHook)
 
 	// Test hook execution
-	err := db.hooks.ExecuteBeforeOperation(context.Background(), "SELECT 1", nil, nil)
+	err := db.hooks.executeBeforeOperation(context.Background(), "SELECT 1", nil, nil)
 	if err != nil {
 		t.Errorf("ExecuteBeforeOperation should not return error: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestDBConnectionHooks(t *testing.T) {
 }
 
 func TestHooksConfigurePool(t *testing.T) {
-	hooks := NewHooks()
+	hooks := newHooks()
 
 	// Add some connection hooks
 	connectCalled := false
@@ -112,7 +112,7 @@ func TestHooksConfigurePool(t *testing.T) {
 	acquireCalled := false
 	releaseCalled := false
 
-	err := hooks.AddConnectionHook("OnConnect", func(conn *pgx.Conn) error {
+	err := hooks.addConnectionHook("OnConnect", func(conn *pgx.Conn) error {
 		connectCalled = true
 		return nil
 	})
@@ -120,14 +120,14 @@ func TestHooksConfigurePool(t *testing.T) {
 		t.Errorf("AddConnectionHook should not return error: %v", err)
 	}
 
-	err = hooks.AddConnectionHook("OnDisconnect", func(conn *pgx.Conn) {
+	err = hooks.addConnectionHook("OnDisconnect", func(conn *pgx.Conn) {
 		disconnectCalled = true
 	})
 	if err != nil {
 		t.Errorf("AddConnectionHook should not return error: %v", err)
 	}
 
-	err = hooks.AddConnectionHook("OnAcquire", func(ctx context.Context, conn *pgx.Conn) error {
+	err = hooks.addConnectionHook("OnAcquire", func(ctx context.Context, conn *pgx.Conn) error {
 		acquireCalled = true
 		return nil
 	})
@@ -135,7 +135,7 @@ func TestHooksConfigurePool(t *testing.T) {
 		t.Errorf("AddConnectionHook should not return error: %v", err)
 	}
 
-	err = hooks.AddConnectionHook("OnRelease", func(conn *pgx.Conn) {
+	err = hooks.addConnectionHook("OnRelease", func(conn *pgx.Conn) {
 		releaseCalled = true
 	})
 	if err != nil {
@@ -146,7 +146,7 @@ func TestHooksConfigurePool(t *testing.T) {
 	config := &pgxpool.Config{}
 
 	// Configure the pool with hooks
-	hooks.ConfigurePool(config)
+	hooks.configurePool(config)
 
 	// Verify that the config now has the hook callbacks
 	if config.AfterConnect == nil {
@@ -184,11 +184,11 @@ func TestHooksConfigurePool(t *testing.T) {
 }
 
 func TestHooksConfigurePoolWithExistingCallbacks(t *testing.T) {
-	hooks := NewHooks()
+	hooks := newHooks()
 
 	// Add a connection hook
 	hookCalled := false
-	err := hooks.AddConnectionHook("OnConnect", func(conn *pgx.Conn) error {
+	err := hooks.addConnectionHook("OnConnect", func(conn *pgx.Conn) error {
 		hookCalled = true
 		return nil
 	})
@@ -210,7 +210,7 @@ func TestHooksConfigurePoolWithExistingCallbacks(t *testing.T) {
 	}
 
 	// Configure the pool with hooks
-	hooks.ConfigurePool(config)
+	hooks.configurePool(config)
 
 	// Test that both original and hook callbacks are called
 	ctx := context.Background()

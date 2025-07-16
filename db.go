@@ -15,7 +15,7 @@ import (
 type DB struct {
 	readPool  *pgxpool.Pool
 	writePool *pgxpool.Pool
-	hooks     *Hooks
+	hooks     *hooks
 	mu        sync.RWMutex
 	shutdown  bool
 }
@@ -26,15 +26,13 @@ type DBConfig struct {
 	MinConns        int32
 	MaxConnLifetime time.Duration
 	MaxConnIdleTime time.Duration
-	// Add hooks during configuration
-	Hooks *Hooks
 }
 
 // NewDB creates a new unconnected DB instance
 // Add hooks to this instance, then call Connect() to establish the database connection
 func NewDB() *DB {
 	return &DB{
-		hooks: NewHooks(),
+		hooks: newHooks(),
 	}
 }
 
@@ -55,7 +53,7 @@ func (db *DB) Connect(ctx context.Context, dsn string) error {
 	}
 
 	// Configure the pool with hooks
-	db.hooks.ConfigurePool(config)
+	db.hooks.configurePool(config)
 
 	// Create the pool
 	pool, err := pgxpool.NewWithConfig(ctx, config)
@@ -92,8 +90,8 @@ func (db *DB) ConnectReadWrite(ctx context.Context, readDSN, writeDSN string) er
 	}
 
 	// Configure both pools with hooks
-	db.hooks.ConfigurePool(readConfig)
-	db.hooks.ConfigurePool(writeConfig)
+	db.hooks.configurePool(readConfig)
+	db.hooks.configurePool(writeConfig)
 
 	// Create read pool
 	readPool, err := pgxpool.NewWithConfig(ctx, readConfig)
@@ -120,7 +118,7 @@ func NewDBWithPool(pool *pgxpool.Pool) *DB {
 	return &DB{
 		readPool:  pool,
 		writePool: pool,
-		hooks:     NewHooks(),
+		hooks:     newHooks(),
 	}
 }
 
@@ -130,7 +128,7 @@ func NewReadWriteDB(readPool, writePool *pgxpool.Pool) *DB {
 	return &DB{
 		readPool:  readPool,
 		writePool: writePool,
-		hooks:     NewHooks(),
+		hooks:     newHooks(),
 	}
 }
 
@@ -169,14 +167,14 @@ func (db *DB) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, err
 	db.mu.RUnlock()
 
 	// Execute BeforeTransaction hooks
-	if err := db.hooks.ExecuteBeforeTransaction(ctx, "", nil, nil); err != nil {
+	if err := db.hooks.executeBeforeTransaction(ctx, "", nil, nil); err != nil {
 		return nil, fmt.Errorf("before transaction hook failed: %w", err)
 	}
 
 	tx, err := db.writePool.BeginTx(ctx, txOptions)
 
 	// Execute AfterTransaction hooks
-	hookErr := db.hooks.ExecuteAfterTransaction(ctx, "", nil, err)
+	hookErr := db.hooks.executeAfterTransaction(ctx, "", nil, err)
 	if hookErr != nil && err == nil {
 		// If transaction succeeded but hook failed, rollback
 		if tx != nil {
@@ -190,18 +188,13 @@ func (db *DB) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, err
 
 // AddHook adds a hook to the database
 func (db *DB) AddHook(hookType HookType, hookFunc HookFunc) *DB {
-	db.hooks.AddHook(hookType, hookFunc)
+	db.hooks.addHook(hookType, hookFunc)
 	return db
 }
 
 // AddConnectionHook adds a connection-level hook
 func (db *DB) AddConnectionHook(hookType string, hookFunc interface{}) error {
-	return db.hooks.AddConnectionHook(hookType, hookFunc)
-}
-
-// Hooks returns the hooks manager for advanced configuration
-func (db *DB) Hooks() *Hooks {
-	return db.hooks
+	return db.hooks.addConnectionHook(hookType, hookFunc)
 }
 
 // Shutdown gracefully shuts down the database connections
@@ -215,7 +208,7 @@ func (db *DB) Shutdown(ctx context.Context) error {
 	db.mu.Unlock()
 
 	// Execute shutdown hooks
-	if err := db.hooks.ExecuteOnShutdown(ctx, "", nil, nil); err != nil {
+	if err := db.hooks.executeOnShutdown(ctx, "", nil, nil); err != nil {
 		return fmt.Errorf("shutdown hook failed: %w", err)
 	}
 
@@ -269,14 +262,14 @@ func (db *DB) executeQuery(ctx context.Context, pool *pgxpool.Pool, sql string, 
 	db.mu.RUnlock()
 
 	// Execute BeforeOperation hooks
-	if err := db.hooks.ExecuteBeforeOperation(ctx, sql, args, nil); err != nil {
+	if err := db.hooks.executeBeforeOperation(ctx, sql, args, nil); err != nil {
 		return nil, fmt.Errorf("before operation hook failed: %w", err)
 	}
 
 	rows, err := pool.Query(ctx, sql, args...)
 
 	// Execute AfterOperation hooks
-	if hookErr := db.hooks.ExecuteAfterOperation(ctx, sql, args, err); hookErr != nil {
+	if hookErr := db.hooks.executeAfterOperation(ctx, sql, args, err); hookErr != nil {
 		if rows != nil {
 			rows.Close()
 		}
@@ -301,7 +294,7 @@ func (db *DB) executeQueryRow(ctx context.Context, pool *pgxpool.Pool, sql strin
 	db.mu.RUnlock()
 
 	// Execute BeforeOperation hooks
-	if err := db.hooks.ExecuteBeforeOperation(ctx, sql, args, nil); err != nil {
+	if err := db.hooks.executeBeforeOperation(ctx, sql, args, nil); err != nil {
 		return &shutdownRow{err: fmt.Errorf("before operation hook failed: %w", err)}
 	}
 
@@ -309,7 +302,7 @@ func (db *DB) executeQueryRow(ctx context.Context, pool *pgxpool.Pool, sql strin
 
 	// Execute AfterOperation hooks - for QueryRow we can't easily get the error
 	// so we pass nil as the operation error
-	if hookErr := db.hooks.ExecuteAfterOperation(ctx, sql, args, nil); hookErr != nil {
+	if hookErr := db.hooks.executeAfterOperation(ctx, sql, args, nil); hookErr != nil {
 		return &shutdownRow{err: fmt.Errorf("after operation hook failed: %w", hookErr)}
 	}
 
@@ -329,14 +322,14 @@ func (db *DB) executeExec(ctx context.Context, pool *pgxpool.Pool, sql string, a
 	db.mu.RUnlock()
 
 	// Execute BeforeOperation hooks
-	if err := db.hooks.ExecuteBeforeOperation(ctx, sql, args, nil); err != nil {
+	if err := db.hooks.executeBeforeOperation(ctx, sql, args, nil); err != nil {
 		return pgconn.CommandTag{}, fmt.Errorf("before operation hook failed: %w", err)
 	}
 
 	tag, err := pool.Exec(ctx, sql, args...)
 
 	// Execute AfterOperation hooks
-	if hookErr := db.hooks.ExecuteAfterOperation(ctx, sql, args, err); hookErr != nil {
+	if hookErr := db.hooks.executeAfterOperation(ctx, sql, args, err); hookErr != nil {
 		if err == nil {
 			return tag, fmt.Errorf("after operation hook failed: %w", hookErr)
 		}

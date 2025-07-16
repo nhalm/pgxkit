@@ -74,7 +74,7 @@ func (tdb *TestDB) EnableGolden(testName string) *DB {
 	goldenDB := &DB{
 		readPool:  tdb.readPool,
 		writePool: tdb.writePool,
-		hooks:     NewHooks(),
+		hooks:     newHooks(),
 	}
 
 	// Create golden test hook
