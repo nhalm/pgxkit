@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -19,8 +20,103 @@ type DB struct {
 	shutdown  bool
 }
 
-// NewDB creates a new DB instance with a single pool (same pool for read/write)
-func NewDB(pool *pgxpool.Pool) *DB {
+// DBConfig holds configuration options for database connections
+type DBConfig struct {
+	MaxConns        int32
+	MinConns        int32
+	MaxConnLifetime time.Duration
+	MaxConnIdleTime time.Duration
+	// Add hooks during configuration
+	Hooks *Hooks
+}
+
+// NewDB creates a new unconnected DB instance
+// Add hooks to this instance, then call Connect() to establish the database connection
+func NewDB() *DB {
+	return &DB{
+		hooks: NewHooks(),
+	}
+}
+
+// Connect establishes a database connection with a single pool (same pool for read/write)
+// The hooks are configured at pool creation time for proper integration
+func (db *DB) Connect(ctx context.Context, dsn string) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	if db.readPool != nil || db.writePool != nil {
+		return fmt.Errorf("database is already connected")
+	}
+
+	// Parse the DSN to get pool config
+	config, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return fmt.Errorf("failed to parse DSN: %w", err)
+	}
+
+	// Configure the pool with hooks
+	db.hooks.ConfigurePool(config)
+
+	// Create the pool
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		return fmt.Errorf("failed to create pool: %w", err)
+	}
+
+	db.readPool = pool
+	db.writePool = pool
+
+	return nil
+}
+
+// ConnectReadWrite establishes database connections with separate read and write pools
+// The hooks are configured at pool creation time for proper integration
+func (db *DB) ConnectReadWrite(ctx context.Context, readDSN, writeDSN string) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	if db.readPool != nil || db.writePool != nil {
+		return fmt.Errorf("database is already connected")
+	}
+
+	// Parse read DSN
+	readConfig, err := pgxpool.ParseConfig(readDSN)
+	if err != nil {
+		return fmt.Errorf("failed to parse read DSN: %w", err)
+	}
+
+	// Parse write DSN
+	writeConfig, err := pgxpool.ParseConfig(writeDSN)
+	if err != nil {
+		return fmt.Errorf("failed to parse write DSN: %w", err)
+	}
+
+	// Configure both pools with hooks
+	db.hooks.ConfigurePool(readConfig)
+	db.hooks.ConfigurePool(writeConfig)
+
+	// Create read pool
+	readPool, err := pgxpool.NewWithConfig(ctx, readConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create read pool: %w", err)
+	}
+
+	// Create write pool
+	writePool, err := pgxpool.NewWithConfig(ctx, writeConfig)
+	if err != nil {
+		readPool.Close()
+		return fmt.Errorf("failed to create write pool: %w", err)
+	}
+
+	db.readPool = readPool
+	db.writePool = writePool
+
+	return nil
+}
+
+// NewDBWithPool creates a new DB instance with a single pool (same pool for read/write)
+// Deprecated: Use NewDB() + Connect() instead for proper hook integration
+func NewDBWithPool(pool *pgxpool.Pool) *DB {
 	return &DB{
 		readPool:  pool,
 		writePool: pool,
@@ -29,6 +125,7 @@ func NewDB(pool *pgxpool.Pool) *DB {
 }
 
 // NewReadWriteDB creates a new DB instance with separate read and write pools
+// Deprecated: Use NewDB() + ConnectReadWrite() instead for proper hook integration
 func NewReadWriteDB(readPool, writePool *pgxpool.Pool) *DB {
 	return &DB{
 		readPool:  readPool,
@@ -164,6 +261,10 @@ func (db *DB) executeQuery(ctx context.Context, pool *pgxpool.Pool, sql string, 
 		db.mu.RUnlock()
 		return nil, fmt.Errorf("database is shutting down")
 	}
+	if pool == nil {
+		db.mu.RUnlock()
+		return nil, fmt.Errorf("database is not connected")
+	}
 	db.mu.RUnlock()
 
 	// Execute BeforeOperation hooks
@@ -192,6 +293,10 @@ func (db *DB) executeQueryRow(ctx context.Context, pool *pgxpool.Pool, sql strin
 		db.mu.RUnlock()
 		return &shutdownRow{err: fmt.Errorf("database is shutting down")}
 	}
+	if pool == nil {
+		db.mu.RUnlock()
+		return &shutdownRow{err: fmt.Errorf("database is not connected")}
+	}
 	db.mu.RUnlock()
 
 	// Execute BeforeOperation hooks
@@ -215,6 +320,10 @@ func (db *DB) executeExec(ctx context.Context, pool *pgxpool.Pool, sql string, a
 	if db.shutdown {
 		db.mu.RUnlock()
 		return pgconn.CommandTag{}, fmt.Errorf("database is shutting down")
+	}
+	if pool == nil {
+		db.mu.RUnlock()
+		return pgconn.CommandTag{}, fmt.Errorf("database is not connected")
 	}
 	db.mu.RUnlock()
 

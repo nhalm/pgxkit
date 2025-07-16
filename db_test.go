@@ -9,8 +9,8 @@ import (
 )
 
 func TestNewDB(t *testing.T) {
-	// Test with nil pool - should not panic
-	db := NewDB(nil)
+	// Test creating unconnected DB
+	db := NewDB()
 	if db == nil {
 		t.Error("NewDB should not return nil")
 		return
@@ -49,7 +49,7 @@ func TestNewReadWriteDB(t *testing.T) {
 }
 
 func TestDBHooks(t *testing.T) {
-	db := NewDB(nil)
+	db := NewDB()
 
 	// Test adding operation-level hooks
 	hookCalled := false
@@ -81,7 +81,7 @@ func TestDBHooks(t *testing.T) {
 }
 
 func TestDBConnectionHooks(t *testing.T) {
-	db := NewDB(nil)
+	db := NewDB()
 
 	// Test adding connection-level hooks
 	connectCalled := false
@@ -244,7 +244,7 @@ func TestHooksConfigurePoolWithExistingCallbacks(t *testing.T) {
 }
 
 func TestDBShutdown(t *testing.T) {
-	db := NewDB(nil)
+	db := NewDB()
 
 	// Test shutdown
 	err := db.Shutdown(context.Background())
@@ -265,7 +265,7 @@ func TestDBShutdown(t *testing.T) {
 }
 
 func TestDBStats(t *testing.T) {
-	db := NewDB(nil)
+	db := NewDB()
 
 	// These should not panic even with nil pools
 	writeStats := db.Stats()
