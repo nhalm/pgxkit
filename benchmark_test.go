@@ -238,14 +238,3 @@ func BenchmarkHookExecutionTime(b *testing.B) {
 		}
 	})
 }
-
-// validatePerformanceRequirements checks if benchmarks meet the <1ms requirement
-func validatePerformanceRequirements(b *testing.B, duration time.Duration) {
-	// Convert to nanoseconds per operation
-	nsPerOp := duration.Nanoseconds() / int64(b.N)
-
-	// Check if under 1ms (1,000,000 ns)
-	if nsPerOp > 1000000 {
-		b.Errorf("Performance requirement not met: %d ns/op > 1ms", nsPerOp)
-	}
-}
