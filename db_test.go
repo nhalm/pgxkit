@@ -3,6 +3,9 @@ package pgxkit
 import (
 	"context"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestNewDB(t *testing.T) {
@@ -74,6 +77,169 @@ func TestDBHooks(t *testing.T) {
 
 	if !hookCalled {
 		t.Error("Hook should have been called")
+	}
+}
+
+func TestDBConnectionHooks(t *testing.T) {
+	db := NewDB(nil)
+
+	// Test adding connection-level hooks
+	connectCalled := false
+	testConnectHook := func(conn *pgx.Conn) error {
+		connectCalled = true
+		return nil
+	}
+
+	err := db.AddConnectionHook("OnConnect", testConnectHook)
+	if err != nil {
+		t.Errorf("AddConnectionHook should not return error: %v", err)
+	}
+
+	// Test invalid connection hook type
+	err = db.AddConnectionHook("InvalidHook", testConnectHook)
+	if err == nil {
+		t.Error("AddConnectionHook should return error for invalid hook type")
+	}
+
+	// Test hook execution
+	err = db.hooks.connectionHooks.ExecuteOnConnect(nil)
+	if err != nil {
+		t.Errorf("ExecuteOnConnect should not return error: %v", err)
+	}
+
+	if !connectCalled {
+		t.Error("Connect hook should have been called")
+	}
+}
+
+func TestHooksConfigurePool(t *testing.T) {
+	hooks := NewHooks()
+
+	// Add some connection hooks
+	connectCalled := false
+	disconnectCalled := false
+	acquireCalled := false
+	releaseCalled := false
+
+	err := hooks.AddConnectionHook("OnConnect", func(conn *pgx.Conn) error {
+		connectCalled = true
+		return nil
+	})
+	if err != nil {
+		t.Errorf("AddConnectionHook should not return error: %v", err)
+	}
+
+	err = hooks.AddConnectionHook("OnDisconnect", func(conn *pgx.Conn) {
+		disconnectCalled = true
+	})
+	if err != nil {
+		t.Errorf("AddConnectionHook should not return error: %v", err)
+	}
+
+	err = hooks.AddConnectionHook("OnAcquire", func(ctx context.Context, conn *pgx.Conn) error {
+		acquireCalled = true
+		return nil
+	})
+	if err != nil {
+		t.Errorf("AddConnectionHook should not return error: %v", err)
+	}
+
+	err = hooks.AddConnectionHook("OnRelease", func(conn *pgx.Conn) {
+		releaseCalled = true
+	})
+	if err != nil {
+		t.Errorf("AddConnectionHook should not return error: %v", err)
+	}
+
+	// Create a mock pool config
+	config := &pgxpool.Config{}
+
+	// Configure the pool with hooks
+	hooks.ConfigurePool(config)
+
+	// Verify that the config now has the hook callbacks
+	if config.AfterConnect == nil {
+		t.Error("Expected AfterConnect to be set")
+	}
+
+	if config.BeforeClose == nil {
+		t.Error("Expected BeforeClose to be set")
+	}
+
+	// Test that the hooks are actually called
+	ctx := context.Background()
+	err = config.AfterConnect(ctx, nil)
+	if err != nil {
+		t.Errorf("AfterConnect should not return error: %v", err)
+	}
+
+	if !connectCalled {
+		t.Error("OnConnect hook should have been called")
+	}
+
+	if !acquireCalled {
+		t.Error("OnAcquire hook should have been called")
+	}
+
+	config.BeforeClose(nil)
+
+	if !disconnectCalled {
+		t.Error("OnDisconnect hook should have been called")
+	}
+
+	if !releaseCalled {
+		t.Error("OnRelease hook should have been called")
+	}
+}
+
+func TestHooksConfigurePoolWithExistingCallbacks(t *testing.T) {
+	hooks := NewHooks()
+
+	// Add a connection hook
+	hookCalled := false
+	err := hooks.AddConnectionHook("OnConnect", func(conn *pgx.Conn) error {
+		hookCalled = true
+		return nil
+	})
+	if err != nil {
+		t.Errorf("AddConnectionHook should not return error: %v", err)
+	}
+
+	// Create a mock pool config with existing callbacks
+	originalConnectCalled := false
+	originalCloseCalled := false
+	config := &pgxpool.Config{
+		AfterConnect: func(ctx context.Context, conn *pgx.Conn) error {
+			originalConnectCalled = true
+			return nil
+		},
+		BeforeClose: func(conn *pgx.Conn) {
+			originalCloseCalled = true
+		},
+	}
+
+	// Configure the pool with hooks
+	hooks.ConfigurePool(config)
+
+	// Test that both original and hook callbacks are called
+	ctx := context.Background()
+	err = config.AfterConnect(ctx, nil)
+	if err != nil {
+		t.Errorf("AfterConnect should not return error: %v", err)
+	}
+
+	if !originalConnectCalled {
+		t.Error("Original AfterConnect callback should have been called")
+	}
+
+	if !hookCalled {
+		t.Error("Hook callback should have been called")
+	}
+
+	config.BeforeClose(nil)
+
+	if !originalCloseCalled {
+		t.Error("Original BeforeClose callback should have been called")
 	}
 }
 

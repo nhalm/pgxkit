@@ -101,6 +101,11 @@ func (db *DB) AddConnectionHook(hookType string, hookFunc interface{}) error {
 	return db.hooks.AddConnectionHook(hookType, hookFunc)
 }
 
+// Hooks returns the hooks manager for advanced configuration
+func (db *DB) Hooks() *Hooks {
+	return db.hooks
+}
+
 // Shutdown gracefully shuts down the database connections
 func (db *DB) Shutdown(ctx context.Context) error {
 	db.mu.Lock()
