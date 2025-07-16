@@ -12,7 +12,9 @@ This document provides comprehensive examples of using pgxkit v2.0 - the tool-ag
 6. [DSN Utilities](#dsn-utilities)
 7. [Testing](#testing)
 8. [Type Helpers](#type-helpers)
-9. [Production Patterns](#production-patterns)
+9. [Metrics and Observability](#metrics-and-observability)
+10. [Production Patterns](#production-patterns)
+11. [Integration with Code Generation Tools](#integration-with-code-generation-tools)
 
 ## Basic Usage
 
@@ -841,6 +843,259 @@ func handleDatabaseOperation(db *pgxkit.DB) error {
 }
 ```
 
+## Metrics and Observability
+
+pgxkit doesn't provide built-in metrics interfaces, allowing you to use your preferred metrics library directly in hooks. Here are examples with popular metrics libraries:
+
+### Prometheus Metrics
+
+```go
+import (
+    "github.com/prometheus/client_golang/prometheus"
+    "github.com/prometheus/client_golang/prometheus/promauto"
+)
+
+var (
+    dbConnections = promauto.NewGaugeVec(
+        prometheus.GaugeOpts{
+            Name: "db_connections_active",
+            Help: "Number of active database connections",
+        },
+        []string{"pool"},
+    )
+    
+    queryDuration = promauto.NewHistogramVec(
+        prometheus.HistogramOpts{
+            Name: "db_query_duration_seconds",
+            Help: "Database query duration in seconds",
+        },
+        []string{"operation"},
+    )
+    
+    queryTotal = promauto.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "db_queries_total",
+            Help: "Total number of database queries",
+        },
+        []string{"operation", "status"},
+    )
+)
+
+func setupPrometheusMetrics(db *pgxkit.DB) {
+    // Track query metrics
+    db.AddHook(pgxkit.BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        // Start timer (store in context)
+        start := time.Now()
+        ctx = context.WithValue(ctx, "query_start", start)
+        
+        // Count query attempts
+        operation := getOperationType(sql)
+        queryTotal.WithLabelValues(operation, "attempted").Inc()
+        
+        return nil
+    })
+    
+    db.AddHook(pgxkit.AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        // Record query duration
+        if start, ok := ctx.Value("query_start").(time.Time); ok {
+            duration := time.Since(start)
+            operation := getOperationType(sql)
+            queryDuration.WithLabelValues(operation).Observe(duration.Seconds())
+            
+            // Count success/failure
+            status := "success"
+            if operationErr != nil {
+                status = "error"
+            }
+            queryTotal.WithLabelValues(operation, status).Inc()
+        }
+        
+        return nil
+    })
+    
+    // Track connection metrics
+    db.AddHook(pgxkit.OnAcquire, func(ctx context.Context, conn *pgx.Conn) error {
+        dbConnections.WithLabelValues("write").Inc()
+        return nil
+    })
+    
+    db.AddHook(pgxkit.OnRelease, func(conn *pgx.Conn) {
+        dbConnections.WithLabelValues("write").Dec()
+    })
+}
+
+func getOperationType(sql string) string {
+    sql = strings.TrimSpace(strings.ToUpper(sql))
+    if strings.HasPrefix(sql, "SELECT") {
+        return "select"
+    } else if strings.HasPrefix(sql, "INSERT") {
+        return "insert"
+    } else if strings.HasPrefix(sql, "UPDATE") {
+        return "update"
+    } else if strings.HasPrefix(sql, "DELETE") {
+        return "delete"
+    }
+    return "other"
+}
+```
+
+### OpenTelemetry Tracing
+
+```go
+import (
+    "go.opentelemetry.io/otel"
+    "go.opentelemetry.io/otel/attribute"
+    "go.opentelemetry.io/otel/trace"
+)
+
+func setupOpenTelemetryTracing(db *pgxkit.DB) {
+    tracer := otel.Tracer("pgxkit")
+    
+    db.AddHook(pgxkit.BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        // Start span
+        ctx, span := tracer.Start(ctx, "db.query")
+        span.SetAttributes(
+            attribute.String("db.statement", sql),
+            attribute.Int("db.args.count", len(args)),
+        )
+        
+        // Store span in context for AfterOperation hook
+        ctx = context.WithValue(ctx, "otel_span", span)
+        
+        return nil
+    })
+    
+    db.AddHook(pgxkit.AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        // End span
+        if span, ok := ctx.Value("otel_span").(trace.Span); ok {
+            if operationErr != nil {
+                span.RecordError(operationErr)
+                span.SetAttributes(attribute.Bool("db.error", true))
+            }
+            span.End()
+        }
+        
+        return nil
+    })
+}
+```
+
+### StatsD Metrics
+
+```go
+import "github.com/DataDog/datadog-go/statsd"
+
+func setupStatsDMetrics(db *pgxkit.DB) {
+    client, err := statsd.New("localhost:8125")
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    db.AddHook(pgxkit.BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        // Start timer
+        start := time.Now()
+        ctx = context.WithValue(ctx, "statsd_start", start)
+        
+        // Count query attempts
+        operation := getOperationType(sql)
+        client.Incr("db.query.attempts", []string{fmt.Sprintf("operation:%s", operation)}, 1)
+        
+        return nil
+    })
+    
+    db.AddHook(pgxkit.AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        // Record timing
+        if start, ok := ctx.Value("statsd_start").(time.Time); ok {
+            duration := time.Since(start)
+            operation := getOperationType(sql)
+            
+            client.Timing("db.query.duration", duration, []string{fmt.Sprintf("operation:%s", operation)}, 1)
+            
+            // Count success/failure
+            status := "success"
+            if operationErr != nil {
+                status = "error"
+            }
+            client.Incr("db.query.completed", []string{
+                fmt.Sprintf("operation:%s", operation),
+                fmt.Sprintf("status:%s", status),
+            }, 1)
+        }
+        
+        return nil
+    })
+}
+```
+
+### Custom Metrics with slog
+
+```go
+import "log/slog"
+
+func setupStructuredLogging(db *pgxkit.DB) {
+    logger := slog.Default()
+    
+    db.AddHook(pgxkit.BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        start := time.Now()
+        ctx = context.WithValue(ctx, "log_start", start)
+        
+        logger.InfoContext(ctx, "database query started",
+            slog.String("sql", sql),
+            slog.Int("args_count", len(args)),
+        )
+        
+        return nil
+    })
+    
+    db.AddHook(pgxkit.AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        if start, ok := ctx.Value("log_start").(time.Time); ok {
+            duration := time.Since(start)
+            
+            if operationErr != nil {
+                logger.ErrorContext(ctx, "database query failed",
+                    slog.String("sql", sql),
+                    slog.Duration("duration", duration),
+                    slog.String("error", operationErr.Error()),
+                )
+            } else {
+                logger.InfoContext(ctx, "database query completed",
+                    slog.String("sql", sql),
+                    slog.Duration("duration", duration),
+                )
+            }
+        }
+        
+        return nil
+    })
+}
+```
+
+### Connection Pool Metrics
+
+```go
+// Monitor connection pool health
+func monitorConnectionPool(db *pgxkit.DB) {
+    ticker := time.NewTicker(30 * time.Second)
+    go func() {
+        for range ticker.C {
+            stats := db.Stats()
+            
+            // Log pool statistics
+            slog.Info("connection pool stats",
+                slog.Int32("acquired_conns", stats.AcquiredConns()),
+                slog.Int32("idle_conns", stats.IdleConns()),
+                slog.Int32("max_conns", stats.MaxConns()),
+                slog.Int32("total_conns", stats.TotalConns()),
+            )
+            
+            // Send to your metrics system
+            // prometheus.GaugeVec.WithLabelValues("acquired").Set(float64(stats.AcquiredConns()))
+            // statsd.Gauge("db.pool.acquired", float64(stats.AcquiredConns()), nil, 1)
+        }
+    }()
+}
+```
+
 ## Integration with Code Generation Tools
 
 ### With sqlc
@@ -896,3 +1151,7 @@ func main() {
 ```
 
 This comprehensive examples document shows how to use all of pgxkit's features in real-world scenarios. The tool-agnostic design makes it easy to integrate with any PostgreSQL development approach while providing production-ready features out of the box.
+
+```
+
+```
