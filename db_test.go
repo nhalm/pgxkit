@@ -10,6 +10,7 @@ func TestNewDB(t *testing.T) {
 	db := NewDB(nil)
 	if db == nil {
 		t.Error("NewDB should not return nil")
+		return
 	}
 
 	if db.readPool != db.writePool {
@@ -30,11 +31,10 @@ func TestNewReadWriteDB(t *testing.T) {
 	db := NewReadWriteDB(nil, nil)
 	if db == nil {
 		t.Error("NewReadWriteDB should not return nil")
+		return
 	}
 
-	if db.readPool != nil || db.writePool != nil {
-		// This is expected behavior - we pass nil pools
-	}
+	// Expected behavior - we pass nil pools, so they should be nil
 
 	if db.hooks == nil {
 		t.Error("NewReadWriteDB should initialize hooks")
