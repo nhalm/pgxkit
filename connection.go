@@ -137,12 +137,6 @@ func NewConnectionWithHooks[T Querier](ctx context.Context, dsn string, newQueri
 	return NewConnectionWithConfig(ctx, dsn, newQueriesFunc, config)
 }
 
-// NewConnectionWithLoggingHooks creates a connection with logging hooks enabled
-func NewConnectionWithLoggingHooks[T Querier](ctx context.Context, dsn string, newQueriesFunc func(*pgxpool.Pool) T, logger Logger) (*Connection[T], error) {
-	hooks := LoggingHook(logger)
-	return NewConnectionWithHooks(ctx, dsn, newQueriesFunc, hooks)
-}
-
 // NewConnectionWithValidationHooks creates a connection with validation hooks enabled
 func NewConnectionWithValidationHooks[T Querier](ctx context.Context, dsn string, newQueriesFunc func(*pgxpool.Pool) T) (*Connection[T], error) {
 	hooks := ValidationHook()

@@ -261,39 +261,6 @@ func (h *ConnectionHooks) ExecuteOnRelease(conn *pgx.Conn) {
 
 // Common hook functions for typical use cases
 
-// LoggingHook creates a hook that logs connection events
-func LoggingHook(logger Logger) *ConnectionHooks {
-	hooks := NewConnectionHooks()
-
-	hooks.AddOnConnect(func(conn *pgx.Conn) error {
-		logger.Log(context.Background(), LogLevelInfo, "database connection established", map[string]interface{}{
-			"pid": conn.PgConn().PID(),
-		})
-		return nil
-	})
-
-	hooks.AddOnDisconnect(func(conn *pgx.Conn) {
-		logger.Log(context.Background(), LogLevelInfo, "database connection closed", map[string]interface{}{
-			"pid": conn.PgConn().PID(),
-		})
-	})
-
-	hooks.AddOnAcquire(func(ctx context.Context, conn *pgx.Conn) error {
-		logger.Log(ctx, LogLevelDebug, "connection acquired from pool", map[string]interface{}{
-			"pid": conn.PgConn().PID(),
-		})
-		return nil
-	})
-
-	hooks.AddOnRelease(func(conn *pgx.Conn) {
-		logger.Log(context.Background(), LogLevelDebug, "connection released to pool", map[string]interface{}{
-			"pid": conn.PgConn().PID(),
-		})
-	})
-
-	return hooks
-}
-
 // MetricsHook creates a hook that records connection metrics.
 // Note: Duration tracking for acquire/release is not implemented in hooks as it requires
 // pool-level instrumentation. Use Connection.WithMetrics() for comprehensive metrics.
