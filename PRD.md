@@ -181,19 +181,36 @@ pgxkit.ToPgxTimestamp(timePtr)
 **Priority:** P1 (Should Have)
 
 ```go
-// Test database with setup/teardown
-testDB := pgxkit.NewTestDB()
-defer testDB.Close()
-
-// Golden test support for query plans
-testDB.EnableExplainGolden(t, "test_name")
-repo.GetUsers(ctx) // Automatically captures EXPLAIN plans
+// Simple TestDB with just 3 methods
+func TestSomething(t *testing.T) {
+    testDB := pgxkit.NewTestDB(pool)
+    testDB.Setup()                    // Prepare database for testing
+    defer testDB.Clean()              // Clean database after test
+    
+    // Get a DB with golden test hooks for this specific test
+    db := testDB.EnableGolden(t, "TestSomething")  // Returns *DB with hooks
+    
+    // Use db normally - golden test hooks capture EXPLAIN plans automatically
+    rows, err := db.Query(ctx, "SELECT * FROM users")
+    // Multiple queries create separate golden files automatically
+}
 ```
 
+**Key Requirements:**
+- **TestDB is just an embedded *DB** with exactly 3 methods
+- **Setup()** - Prepare database for testing (migrations, seed data, etc.)
+- **Clean()** - Clean database after test (truncate tables, reset sequences, etc.)
+- **EnableGolden(t, testName)** - Returns new *DB with golden test hooks added
+- Golden test hooks automatically capture EXPLAIN plans for all queries
+- Multiple queries per test create separate golden files
+- File naming: `testdata/golden/TestName_query_1.json`, `TestName_query_2.json`, etc.
+
 **Benefits:**
-- Catches performance regressions
-- Supports multiple queries per test
-- Automatic golden file management
+- Dead simple API - just 3 methods
+- Golden test hooks are just regular hooks added to DB
+- No complex connection management
+- Automatic EXPLAIN plan capture and regression detection
+- Clean separation of concerns
 
 ### 5. Graceful Shutdown
 **Priority:** P1 (Should Have) - **COMPLETED**
@@ -373,6 +390,28 @@ func (db *DB) HealthCheck(ctx context.Context) error
 - [ ] Performance monitoring dashboard
 - [ ] Integration with popular observability tools
 
+## Test Cleanup Completed
+
+**Date:** July 16, 2025
+
+### Removed Redundant Tests
+- **`integration_test.go`**: Removed duplicate hook tests (covered in `db_test.go` and `hooks_test.go`)
+- **`integration_test.go`**: Removed legacy v1 connection tests (not part of v2.0 architecture)
+- **`connection_test.go`**: Deleted entire file (legacy v1 architecture)
+- **`test_connection.go`**: Updated to work with v2.0 architecture using `TestDB` and pools
+
+### Remaining Essential Tests
+- **`db_test.go`**: Core DB functionality ✅
+- **`hooks_test.go`**: Hook system unit tests ✅  
+- **`test_db_test.go`**: Testing infrastructure ✅
+- **`types_test.go`**: Type helpers ✅
+- **`errors_test.go`**: Error handling ✅
+- **`integration_test.go`**: Essential integration tests only (pool utilities)
+
+### Test Count Reduction
+- **Before**: 78+ tests across multiple files with significant overlap
+- **After**: ~50 focused tests covering v2.0 architecture without redundancy
+
 ## Open Questions
 
 1. **Hook Type Validation** - Should we validate hook function signatures at runtime or compile time?
@@ -497,22 +536,23 @@ func FromPgxTimestamptz(ts pgtype.Timestamptz) time.Time
 
 ### 4. `test_db.go` - Testing Infrastructure
 ```go
+// TestDB is just an embedded DB with 3 simple methods
 type TestDB struct {
     *DB
-    goldenEnabled bool
-    testName      string
-    t             *testing.T
 }
 
-func NewTestDB() *TestDB
-func (tdb *TestDB) EnableExplainGolden(t *testing.T, testName string)
-func (tdb *TestDB) captureExplainPlan(ctx context.Context, sql string, args []interface{})
-func RequireTestDB(t *testing.T) *TestDB  // Skips if no test DB available
+func NewTestDB(pool *pgxpool.Pool) *TestDB {
+    return &TestDB{DB: NewDBWithPool(pool)}
+}
 
-// Golden test capture logic for EXPLAIN plans
-// - Automatically captures EXPLAIN (ANALYZE, BUFFERS) plans
-// - Creates separate golden files for each query
-// - File naming: testdata/golden/TestName_query_1.json
+// Setup prepares the database for testing
+func (tdb *TestDB) Setup() error
+
+// Clean cleans the database after the test
+func (tdb *TestDB) Clean() error
+
+// EnableGolden returns a new DB with golden test hooks added
+func (tdb *TestDB) EnableGolden(t *testing.T, testName string) *DB
 ```
 
 ### 5. Clean Up Tasks

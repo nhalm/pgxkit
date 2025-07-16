@@ -9,71 +9,104 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// TestDB wraps the main DB with testing infrastructure and golden test support
+// TestDB is just an embedded DB with 3 simple methods
 type TestDB struct {
 	*DB
-	goldenEnabled bool
-	testName      string
-	t             *testing.T
-	queryCounter  int
-	mu            sync.Mutex
 }
 
-// NewTestDB creates a new TestDB instance with test database setup
-func NewTestDB() *TestDB {
-	return NewTestDBWithConfig(nil)
+// NewTestDB creates a new TestDB instance with the provided pool
+func NewTestDB(pool *pgxpool.Pool) *TestDB {
+	return &TestDB{DB: NewDBWithPool(pool)}
 }
 
-// NewTestDBWithConfig creates a new TestDB instance with custom configuration
-func NewTestDBWithConfig(config *DBConfig) *TestDB {
-	db := NewDB()
+// Setup prepares the database for testing
+func (tdb *TestDB) Setup() error {
+	// This method can be extended to run migrations, seed data, etc.
+	// For now, it's a placeholder that ensures the database is ready
+	ctx := context.Background()
 
-	// Apply configuration if provided
-	if config != nil {
-		if config.Hooks != nil {
-			db.hooks = config.Hooks
-		}
+	// Verify connection is working
+	if tdb.writePool == nil {
+		return fmt.Errorf("no database pool available")
 	}
 
-	return &TestDB{
-		DB:            db,
-		goldenEnabled: false,
-		queryCounter:  0,
-	}
-}
-
-// ConnectToTestDB connects to the test database using TEST_DATABASE_URL
-func (tdb *TestDB) ConnectToTestDB(ctx context.Context) error {
-	testDBURL := os.Getenv("TEST_DATABASE_URL")
-	if testDBURL == "" {
-		return fmt.Errorf("TEST_DATABASE_URL environment variable not set")
+	// Test connection
+	err := tdb.writePool.Ping(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	return tdb.Connect(ctx, testDBURL)
+	return nil
 }
 
-// EnableExplainGolden enables automatic EXPLAIN plan capture for query plan regression testing
-func (tdb *TestDB) EnableExplainGolden(t *testing.T, testName string) {
-	tdb.mu.Lock()
-	defer tdb.mu.Unlock()
+// Clean cleans the database after the test
+func (tdb *TestDB) Clean() error {
+	// This method can be extended to truncate tables, reset sequences, etc.
+	// For now, it's a placeholder for cleanup operations
+	ctx := context.Background()
 
-	tdb.goldenEnabled = true
-	tdb.testName = testName
-	tdb.t = t
-	tdb.queryCounter = 0
+	if tdb.writePool == nil {
+		return nil // No connection to clean
+	}
 
-	// Add hook to capture EXPLAIN plans for all queries
-	err := tdb.AddHook("BeforeOperation", tdb.captureExplainPlan)
+	// Example cleanup operations (can be customized per project)
+	// _, err := tdb.writePool.Exec(ctx, "TRUNCATE TABLE users CASCADE")
+	// if err != nil {
+	//     return fmt.Errorf("failed to clean users table: %w", err)
+	// }
+
+	// For now, just verify the connection is still valid
+	err := tdb.writePool.Ping(ctx)
+	if err != nil {
+		return fmt.Errorf("database connection lost during cleanup: %w", err)
+	}
+
+	return nil
+}
+
+// EnableGolden returns a new DB with golden test hooks added
+func (tdb *TestDB) EnableGolden(t *testing.T, testName string) *DB {
+	// Create a new DB instance with the same pools
+	goldenDB := &DB{
+		readPool:  tdb.readPool,
+		writePool: tdb.writePool,
+		hooks:     NewHooks(),
+	}
+
+	// Create golden test hook with access to the DB
+	goldenHook := &goldenTestHook{
+		t:            t,
+		testName:     testName,
+		queryCounter: 0,
+		mu:           sync.Mutex{},
+		db:           goldenDB,
+	}
+
+	// Add the golden test hook to capture EXPLAIN plans
+	err := goldenDB.AddHook("BeforeOperation", goldenHook.captureExplainPlan)
 	if err != nil {
 		t.Fatalf("Failed to add golden test hook: %v", err)
 	}
+
+	return goldenDB
+}
+
+// goldenTestHook handles golden test functionality
+type goldenTestHook struct {
+	t            *testing.T
+	testName     string
+	queryCounter int
+	mu           sync.Mutex
+	db           *DB
 }
 
 // captureExplainPlan captures EXPLAIN (ANALYZE, BUFFERS) plans for queries
-func (tdb *TestDB) captureExplainPlan(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-	if !tdb.goldenEnabled || tdb.t == nil {
+func (g *goldenTestHook) captureExplainPlan(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+	if g.t == nil || g.db == nil {
 		return nil
 	}
 
@@ -87,25 +120,26 @@ func (tdb *TestDB) captureExplainPlan(ctx context.Context, sql string, args []in
 		return nil
 	}
 
-	tdb.mu.Lock()
-	tdb.queryCounter++
-	currentQuery := tdb.queryCounter
-	tdb.mu.Unlock()
+	g.mu.Lock()
+	g.queryCounter++
+	currentQuery := g.queryCounter
+	g.mu.Unlock()
 
 	// Create EXPLAIN query
 	explainSQL := fmt.Sprintf("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) %s", sql)
 
 	// Check if we have a valid connection
-	if tdb.writePool == nil {
+	if g.db.writePool == nil {
 		// No connection available, skip golden test capture
+		g.t.Logf("Warning: No database connection available for golden test capture")
 		return nil
 	}
 
 	// Execute EXPLAIN query
-	rows, err := tdb.writePool.Query(ctx, explainSQL, args...)
+	rows, err := g.db.writePool.Query(ctx, explainSQL, args...)
 	if err != nil {
 		// Log error but don't fail the test - golden tests are optional
-		tdb.t.Logf("Warning: Failed to capture EXPLAIN plan for query %d: %v", currentQuery, err)
+		g.t.Logf("Warning: Failed to capture EXPLAIN plan for query %d: %v", currentQuery, err)
 		return nil
 	}
 	defer rows.Close()
@@ -115,7 +149,7 @@ func (tdb *TestDB) captureExplainPlan(ctx context.Context, sql string, args []in
 	if rows.Next() {
 		err = rows.Scan(&explainResult)
 		if err != nil {
-			tdb.t.Logf("Warning: Failed to scan EXPLAIN result for query %d: %v", currentQuery, err)
+			g.t.Logf("Warning: Failed to scan EXPLAIN result for query %d: %v", currentQuery, err)
 			return nil
 		}
 	}
@@ -123,29 +157,29 @@ func (tdb *TestDB) captureExplainPlan(ctx context.Context, sql string, args []in
 	// Parse JSON to validate and pretty-print
 	var explainData interface{}
 	if err := json.Unmarshal([]byte(explainResult), &explainData); err != nil {
-		tdb.t.Logf("Warning: Failed to parse EXPLAIN JSON for query %d: %v", currentQuery, err)
+		g.t.Logf("Warning: Failed to parse EXPLAIN JSON for query %d: %v", currentQuery, err)
 		return nil
 	}
 
 	// Pretty-print JSON
 	prettyJSON, err := json.MarshalIndent(explainData, "", "  ")
 	if err != nil {
-		tdb.t.Logf("Warning: Failed to marshal EXPLAIN JSON for query %d: %v", currentQuery, err)
+		g.t.Logf("Warning: Failed to marshal EXPLAIN JSON for query %d: %v", currentQuery, err)
 		return nil
 	}
 
 	// Save to golden file
-	goldenFile := fmt.Sprintf("testdata/golden/%s_query_%d.json", tdb.testName, currentQuery)
-	err = tdb.saveGoldenFile(goldenFile, prettyJSON)
+	goldenFile := fmt.Sprintf("testdata/golden/%s_query_%d.json", g.testName, currentQuery)
+	err = g.saveGoldenFile(goldenFile, prettyJSON)
 	if err != nil {
-		tdb.t.Logf("Warning: Failed to save golden file for query %d: %v", currentQuery, err)
+		g.t.Logf("Warning: Failed to save golden file for query %d: %v", currentQuery, err)
 	}
 
 	return nil
 }
 
 // saveGoldenFile saves the golden file, creating directories as needed
-func (tdb *TestDB) saveGoldenFile(filename string, data []byte) error {
+func (g *goldenTestHook) saveGoldenFile(filename string, data []byte) error {
 	// Create directory if it doesn't exist
 	dir := filepath.Dir(filename)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -174,7 +208,7 @@ func (tdb *TestDB) saveGoldenFile(filename string, data []byte) error {
 		newJSON, _ := json.Marshal(new)
 
 		if string(existingJSON) != string(newJSON) {
-			tdb.t.Errorf("Query plan regression detected in %s\nExpected plan differs from actual plan", filename)
+			g.t.Errorf("Query plan regression detected in %s\nExpected plan differs from actual plan", filename)
 			// TODO: Add detailed diff output
 		}
 
@@ -187,31 +221,29 @@ func (tdb *TestDB) saveGoldenFile(filename string, data []byte) error {
 		return fmt.Errorf("failed to write golden file %s: %w", filename, err)
 	}
 
-	tdb.t.Logf("Created golden file: %s", filename)
+	g.t.Logf("Created golden file: %s", filename)
 	return nil
 }
 
-// RequireTestDBWithGolden ensures a test database is available or skips the test
-func RequireTestDBWithGolden(t *testing.T) *TestDB {
-	testDB := NewTestDB()
-
-	ctx := context.Background()
-	err := testDB.ConnectToTestDB(ctx)
-	if err != nil {
-		t.Skipf("TEST_DATABASE_URL not set or connection failed, skipping test: %v", err)
+// RequireDB ensures a test database is available or skips the test
+func RequireDB(t *testing.T) *TestDB {
+	pool := GetTestPool()
+	if pool == nil {
+		t.Skip("TEST_DATABASE_URL not set, skipping test")
 		return nil
 	}
 
+	testDB := NewTestDB(pool)
 	return testDB
 }
 
-// CleanupGoldenFiles removes all golden files for a test
-func (tdb *TestDB) CleanupGoldenFiles() error {
-	if tdb.testName == "" {
+// CleanupGolden removes all golden files for a test
+func CleanupGolden(testName string) error {
+	if testName == "" {
 		return nil
 	}
 
-	pattern := fmt.Sprintf("testdata/golden/%s_query_*.json", tdb.testName)
+	pattern := fmt.Sprintf("testdata/golden/%s_query_*.json", testName)
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		return fmt.Errorf("failed to find golden files: %w", err)
@@ -224,9 +256,4 @@ func (tdb *TestDB) CleanupGoldenFiles() error {
 	}
 
 	return nil
-}
-
-// Close closes the test database connection and optionally cleans up golden files
-func (tdb *TestDB) Close() error {
-	return tdb.Shutdown(context.Background())
 }
