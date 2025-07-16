@@ -29,31 +29,7 @@ func DefaultRetryConfig() *RetryConfig {
 	}
 }
 
-// RetryableConnection wraps a Connection with retry logic
-type RetryableConnection[T Querier] struct {
-	*Connection[T]
-	retryConfig *RetryConfig
-}
-
-// WithRetry returns a new connection with retry logic enabled
-func (c *Connection[T]) WithRetry(config *RetryConfig) *RetryableConnection[T] {
-	if config == nil {
-		config = DefaultRetryConfig()
-	}
-	return &RetryableConnection[T]{
-		Connection:  c,
-		retryConfig: config,
-	}
-}
-
-// WithRetryableTransaction executes the given function within a database transaction with retry logic
-func (rc *RetryableConnection[T]) WithRetryableTransaction(ctx context.Context, fn TransactionFunc[T]) error {
-	return rc.retryOperation(ctx, func(ctx context.Context) error {
-		return rc.WithTransaction(ctx, fn)
-	})
-}
-
-// WithTimeout executes a function with a timeout and optional retry logic
+// WithTimeout executes a function with a timeout
 func WithTimeout[T any](ctx context.Context, timeout time.Duration, fn func(context.Context) (T, error)) (T, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -68,7 +44,7 @@ func WithTimeoutAndRetry[T any](ctx context.Context, timeout time.Duration, retr
 	}
 
 	var result T
-	err := retryOperation(ctx, retryConfig, func(ctx context.Context) error {
+	err := RetryOperation(ctx, retryConfig, func(ctx context.Context) error {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 
@@ -80,13 +56,12 @@ func WithTimeoutAndRetry[T any](ctx context.Context, timeout time.Duration, retr
 	return result, err
 }
 
-// retryOperation retries an operation based on the retry configuration
-func (rc *RetryableConnection[T]) retryOperation(ctx context.Context, operation func(context.Context) error) error {
-	return retryOperation(ctx, rc.retryConfig, operation)
-}
+// RetryOperation is the generic retry function that can be used with any operation
+func RetryOperation(ctx context.Context, config *RetryConfig, operation func(context.Context) error) error {
+	if config == nil {
+		config = DefaultRetryConfig()
+	}
 
-// retryOperation is the generic retry function
-func retryOperation(ctx context.Context, config *RetryConfig, operation func(context.Context) error) error {
 	var lastErr error
 	delay := config.BaseDelay
 
@@ -115,7 +90,7 @@ func retryOperation(ctx context.Context, config *RetryConfig, operation func(con
 		lastErr = err
 
 		// Check if error is retryable
-		if !isRetryableError(err) {
+		if !IsRetryableError(err) {
 			return err
 		}
 
@@ -128,8 +103,8 @@ func retryOperation(ctx context.Context, config *RetryConfig, operation func(con
 	return fmt.Errorf("operation failed after %d attempts, last error: %w", config.MaxRetries+1, lastErr)
 }
 
-// isRetryableError determines if an error is worth retrying
-func isRetryableError(err error) bool {
+// IsRetryableError determines if an error is worth retrying
+func IsRetryableError(err error) bool {
 	if err == nil {
 		return false
 	}

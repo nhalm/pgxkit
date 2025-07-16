@@ -3,6 +3,8 @@ package pgxkit
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -10,6 +12,56 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// getEnvWithDefault returns the value of the environment variable or a default value
+func getEnvWithDefault(key, def string) string {
+	val := os.Getenv(key)
+	if val == "" {
+		return def
+	}
+	return val
+}
+
+// getEnvIntWithDefault returns the value of the environment variable as an int or a default value
+func getEnvIntWithDefault(key string, def int) int {
+	val := os.Getenv(key)
+	if val == "" {
+		return def
+	}
+	n, err := strconv.Atoi(val)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+// getDSN returns the database connection string using environment variables
+func getDSN() string {
+	return getDSNWithSearchPath("")
+}
+
+// getDSNWithSearchPath returns the database connection string with a custom search path
+func getDSNWithSearchPath(searchPath string) string {
+	host := getEnvWithDefault("POSTGRES_HOST", "localhost")
+	port := getEnvIntWithDefault("POSTGRES_PORT", 5432)
+	user := getEnvWithDefault("POSTGRES_USER", "postgres")
+	password := getEnvWithDefault("POSTGRES_PASSWORD", "")
+	dbname := getEnvWithDefault("POSTGRES_DB", "postgres")
+	sslmode := getEnvWithDefault("POSTGRES_SSLMODE", "disable")
+
+	dsn := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s", user, password, host, port, dbname, sslmode)
+	if searchPath != "" {
+		dsn += "&search_path=" + searchPath
+	}
+	return dsn
+}
+
+// GetDSN returns the database connection string using the same POSTGRES_* environment
+// variables that Connect uses. This is useful for tools like golang-migrate
+// that need a connection string rather than a pgxpool.Pool.
+func GetDSN() string {
+	return getDSN()
+}
 
 // DB represents a database connection with read/write pool abstraction
 type DB struct {
@@ -38,6 +90,7 @@ func NewDB() *DB {
 }
 
 // Connect establishes a database connection with a single pool (same pool for read/write)
+// If dsn is empty, it uses environment variables to construct the connection string.
 // The hooks are configured at pool creation time for proper integration
 func (db *DB) Connect(ctx context.Context, dsn string) error {
 	db.mu.Lock()
@@ -45,6 +98,11 @@ func (db *DB) Connect(ctx context.Context, dsn string) error {
 
 	if db.readPool != nil || db.writePool != nil {
 		return fmt.Errorf("database is already connected")
+	}
+
+	// Use environment variables if no DSN provided
+	if dsn == "" {
+		dsn = getDSN()
 	}
 
 	// Parse the DSN to get pool config
@@ -69,6 +127,7 @@ func (db *DB) Connect(ctx context.Context, dsn string) error {
 }
 
 // ConnectReadWrite establishes database connections with separate read and write pools
+// If readDSN or writeDSN is empty, it uses environment variables to construct the connection string.
 // The hooks are configured at pool creation time for proper integration
 func (db *DB) ConnectReadWrite(ctx context.Context, readDSN, writeDSN string) error {
 	db.mu.Lock()
@@ -76,6 +135,14 @@ func (db *DB) ConnectReadWrite(ctx context.Context, readDSN, writeDSN string) er
 
 	if db.readPool != nil || db.writePool != nil {
 		return fmt.Errorf("database is already connected")
+	}
+
+	// Use environment variables if no DSN provided
+	if readDSN == "" {
+		readDSN = getDSN()
+	}
+	if writeDSN == "" {
+		writeDSN = getDSN()
 	}
 
 	// Parse read DSN
@@ -262,6 +329,104 @@ func (db *DB) WriteStats() *pgxpool.Stat {
 		return nil
 	}
 	return db.writePool.Stat()
+}
+
+// HealthCheck performs a simple health check by pinging the database
+func (db *DB) HealthCheck(ctx context.Context) error {
+	if ctx == nil {
+		return fmt.Errorf("context cannot be nil")
+	}
+
+	db.mu.RLock()
+	if db.shutdown {
+		db.mu.RUnlock()
+		return fmt.Errorf("database is shutting down")
+	}
+	if db.writePool == nil {
+		db.mu.RUnlock()
+		return fmt.Errorf("database is not connected")
+	}
+	pool := db.writePool
+	db.mu.RUnlock()
+
+	return pool.Ping(ctx)
+}
+
+// IsReady checks if the database connection is ready to accept queries
+func (db *DB) IsReady(ctx context.Context) bool {
+	return db.HealthCheck(ctx) == nil
+}
+
+// Retry methods for convenience
+
+// ExecWithRetry executes a statement using the write pool with retry logic
+func (db *DB) ExecWithRetry(ctx context.Context, config *RetryConfig, sql string, args ...interface{}) (pgconn.CommandTag, error) {
+	var result pgconn.CommandTag
+	err := RetryOperation(ctx, config, func(ctx context.Context) error {
+		var err error
+		result, err = db.Exec(ctx, sql, args...)
+		return err
+	})
+	return result, err
+}
+
+// QueryWithRetry executes a query using the write pool with retry logic
+func (db *DB) QueryWithRetry(ctx context.Context, config *RetryConfig, sql string, args ...interface{}) (pgx.Rows, error) {
+	var result pgx.Rows
+	err := RetryOperation(ctx, config, func(ctx context.Context) error {
+		var err error
+		result, err = db.Query(ctx, sql, args...)
+		return err
+	})
+	return result, err
+}
+
+// QueryRowWithRetry executes a query that returns a single row using the write pool with retry logic
+func (db *DB) QueryRowWithRetry(ctx context.Context, config *RetryConfig, sql string, args ...interface{}) pgx.Row {
+	var result pgx.Row
+	err := RetryOperation(ctx, config, func(ctx context.Context) error {
+		result = db.QueryRow(ctx, sql, args...)
+		return nil // QueryRow doesn't return an error directly
+	})
+	if err != nil {
+		return &shutdownRow{err: err}
+	}
+	return result
+}
+
+// ReadQueryWithRetry executes a query using the read pool with retry logic
+func (db *DB) ReadQueryWithRetry(ctx context.Context, config *RetryConfig, sql string, args ...interface{}) (pgx.Rows, error) {
+	var result pgx.Rows
+	err := RetryOperation(ctx, config, func(ctx context.Context) error {
+		var err error
+		result, err = db.ReadQuery(ctx, sql, args...)
+		return err
+	})
+	return result, err
+}
+
+// ReadQueryRowWithRetry executes a query that returns a single row using the read pool with retry logic
+func (db *DB) ReadQueryRowWithRetry(ctx context.Context, config *RetryConfig, sql string, args ...interface{}) pgx.Row {
+	var result pgx.Row
+	err := RetryOperation(ctx, config, func(ctx context.Context) error {
+		result = db.ReadQueryRow(ctx, sql, args...)
+		return nil // QueryRow doesn't return an error directly
+	})
+	if err != nil {
+		return &shutdownRow{err: err}
+	}
+	return result
+}
+
+// BeginTxWithRetry starts a transaction using the write pool with retry logic
+func (db *DB) BeginTxWithRetry(ctx context.Context, config *RetryConfig, txOptions pgx.TxOptions) (pgx.Tx, error) {
+	var result pgx.Tx
+	err := RetryOperation(ctx, config, func(ctx context.Context) error {
+		var err error
+		result, err = db.BeginTx(ctx, txOptions)
+		return err
+	})
+	return result, err
 }
 
 // Internal execution methods that handle hooks
