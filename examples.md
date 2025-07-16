@@ -1130,3 +1130,116 @@ func main() {
     defer rows.Close()
 }
 ```
+
+## New Connect() Function with Integrated Hooks
+
+### Basic Usage
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "time"
+
+    "github.com/nhalm/pgxkit"
+)
+
+func main() {
+    ctx := context.Background()
+    
+    // 1. Create a new DB instance (no connection yet)
+    db := pgxkit.NewDB()
+    
+    // 2. Add hooks BEFORE connecting (hooks will be integrated during connection)
+    err := db.AddHook("BeforeOperation", func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        log.Printf("Executing query: %s", sql)
+        return nil
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // Add connection-level hooks that will execute during pool lifecycle
+    err = db.AddConnectionHook("OnConnect", func(conn *pgx.Conn) error {
+        log.Printf("New connection established: PID %d", conn.PgConn().PID())
+        return nil
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // 3. Connect to database with hooks already configured
+    err = db.Connect(ctx, "postgres://user:password@localhost/dbname")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer db.Shutdown(ctx)
+    
+    // Now use the database - hooks will execute automatically
+    rows, err := db.Query(ctx, "SELECT id, name FROM users WHERE active = $1", true)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer rows.Close()
+    
+    // Process results...
+}
+```
+
+### Read/Write Split with Hooks
+
+```go
+func main() {
+    ctx := context.Background()
+    
+    // 1. Create a new DB instance (no connection yet)
+    db := pgxkit.NewDB()
+    
+    // 2. Add hooks BEFORE connecting
+    db.AddHook("BeforeOperation", func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        start := time.Now()
+        ctx = context.WithValue(ctx, "start_time", start)
+        return nil
+    })
+    
+    db.AddHook("AfterOperation", func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        if start, ok := ctx.Value("start_time").(time.Time); ok {
+            duration := time.Since(start)
+            log.Printf("Query took %v: %s", duration, sql)
+        }
+        return nil
+    })
+    
+    // 3. Connect with separate read/write pools (hooks already configured)
+    err := db.ConnectReadWrite(ctx, 
+        "postgres://user:password@read-replica/dbname",
+        "postgres://user:password@primary/dbname")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer db.Shutdown(ctx)
+    
+    // Use read pool for queries (hooks execute automatically)
+    users, err := db.ReadQuery(ctx, "SELECT * FROM users")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer users.Close()
+    
+    // Use write pool for mutations (hooks execute automatically)
+    _, err = db.Exec(ctx, "UPDATE users SET last_login = NOW() WHERE id = $1", 123)
+    if err != nil {
+        log.Fatal(err)
+    }
+}
+```
+
+### Key Benefits of This Approach
+
+1. **Hooks configured before connection** - pgx connection-level hooks are properly integrated when pools are created
+2. **Clean separation** - Create DB → Add hooks → Connect
+3. **Proper abstraction** - pgxkit manages pool creation with hooks already configured
+4. **Flexible configuration** - Add multiple hooks before connecting
+5. **Type safety** - Hooks are validated when added, not when connecting
