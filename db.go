@@ -1,3 +1,43 @@
+// Package pgxkit provides a production-ready PostgreSQL toolkit for Go applications.
+//
+// pgxkit is a tool-agnostic PostgreSQL toolkit that works with any approach to
+// PostgreSQL development - raw pgx usage, code generation tools like sqlc or Skimatik,
+// or any other PostgreSQL development workflow.
+//
+// Key Features:
+//
+//   - Read/Write Pool Abstraction: Safe by default with write pool, explicit read pool methods for optimization
+//   - Extensible Hook System: Add logging, tracing, metrics, circuit breakers through hooks
+//   - Smart Retry Logic: PostgreSQL-aware error detection with exponential backoff
+//   - Testing Infrastructure: Golden test support for performance regression detection
+//   - Type Helpers: Seamless pgx type conversions for clean architecture
+//   - Health Checks: Built-in database connectivity monitoring
+//   - Graceful Shutdown: Production-ready lifecycle management
+//
+// Basic Usage:
+//
+//	db := pgxkit.NewDB()
+//	err := db.Connect(ctx, "") // Uses POSTGRES_* env vars
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	defer db.Shutdown(ctx)
+//
+//	// Execute queries (uses write pool by default - safe)
+//	_, err = db.Exec(ctx, "INSERT INTO users (name) VALUES ($1)", "John")
+//
+//	// Optimize reads with explicit read pool usage
+//	rows, err := db.ReadQuery(ctx, "SELECT id, name FROM users")
+//
+// Hook System:
+//
+//	db.AddHook(pgxkit.BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+//	    log.Printf("Executing: %s", sql)
+//	    return nil
+//	})
+//
+// The package follows a "safety first" design - all default methods use the write pool
+// for consistency, with explicit ReadQuery() methods available for read optimization.
 package pgxkit
 
 import (
@@ -401,6 +441,10 @@ func (db *DB) AddHook(hookType HookType, hookFunc HookFunc) *DB {
 //	    log.Println("New connection established")
 //	    return nil
 //	})
+//
+// TODO: hookType needs to be an Enum.
+// TODO: this doc needs to be updated to reflect the new hookType Enum and that this is for pgx hooks.
+// TODO: this should be split up into the different pgx hooks. and then we don't need the enum.
 func (db *DB) AddConnectionHook(hookType string, hookFunc interface{}) error {
 	return db.hooks.addConnectionHook(hookType, hookFunc)
 }
