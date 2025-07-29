@@ -233,12 +233,7 @@ func FromPgxNumeric(n pgtype.Numeric) *float64 {
 	return &result
 }
 
-// Legacy aliases for backward compatibility
-// TODO: Consider deprecating these in favor of the new names
-var (
-	ToPgxNumericFromFloat64Ptr = ToPgxNumeric
-	FromPgxNumericPtr          = FromPgxNumeric
-)
+
 
 // =============================================================================
 // UUID CONVERSIONS

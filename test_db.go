@@ -45,7 +45,7 @@ func NewTestDB() *TestDB {
 
 // Setup prepares the database for testing.
 // This method verifies the database connection and can be extended
-// to run migrations, seed data, or perform other test setup tasks.
+// to seed data or perform other test setup tasks.
 // Returns an error if the database is not available or not ready for testing.
 //
 // Example:
@@ -55,7 +55,7 @@ func NewTestDB() *TestDB {
 //	    t.Skip("Test database not available")
 //	}
 func (tdb *TestDB) Setup() error {
-	// This method can be extended to run migrations, seed data, etc.
+	// This method can be extended to seed data, etc.
 	// For now, it's a placeholder that ensures the database is ready
 	ctx := context.Background()
 

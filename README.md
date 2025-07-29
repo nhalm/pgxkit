@@ -114,8 +114,8 @@ pgxkit uses these environment variables when no DSN is provided:
 // Get DSN from environment variables
 dsn := pgxkit.GetDSN()
 
-// Use with external tools like golang-migrate
-migrate -database "$(pgxkit.GetDSN())" -path ./migrations up
+// Use with external tools
+dsn := pgxkit.GetDSN()
 ```
 
 ## Hooks System

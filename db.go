@@ -98,8 +98,7 @@ func getDSNWithSearchPath(searchPath string) string {
 }
 
 // GetDSN returns a PostgreSQL connection string built from environment variables.
-// This is useful for integrating with external tools like golang-migrate
-// that need a connection string rather than a pgxpool.Pool.
+// This is useful for scripts and tools that need a connection string rather than a pgxpool.Pool.
 //
 // Environment variables used:
 //   - POSTGRES_HOST (default: "localhost")
@@ -112,7 +111,6 @@ func getDSNWithSearchPath(searchPath string) string {
 // Example:
 //
 //	dsn := pgxkit.GetDSN()
-//	// Use with golang-migrate: migrate -database "$(pgxkit.GetDSN())" -path ./migrations up
 func GetDSN() string {
 	return getDSN()
 }
