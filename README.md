@@ -387,7 +387,6 @@ db.AddHook(pgxkit.BeforeOperation, func(ctx context.Context, sql string, args []
 - **[Testing Guide](TESTING.md)** - Testing strategies and golden tests
 - **[Quick Start](QUICKSTART.md)** - Get started in 5 minutes
 - **[Examples](examples.md)** - Practical code examples and use cases
-- **[Wiki Sync Guide](docs/WIKI_SYNC.md)** - Understanding the automated wiki synchronization
 
 ## Contributing
 
