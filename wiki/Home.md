@@ -4,17 +4,17 @@
 
 ## Quick Navigation
 
-### 📚 Documentation
+### Documentation
 - [Getting Started](Getting-Started) - Setup and basic usage
 - [API Reference](API-Reference) - Complete API documentation
 - [Examples](Examples) - Practical code examples and use cases
 
-### 🚀 Performance & Production
+### Performance & Production
 - [Performance Guide](Performance-Guide) - Optimization strategies and best practices
 - [Production Guide](Production-Guide) - Deployment and production considerations
 - [Testing Guide](Testing-Guide) - Testing strategies and golden tests
 
-### 🔧 Development
+### Development
 - [Contributing](Contributing) - How to contribute to pgxkit
 - [FAQ](FAQ) - Frequently asked questions
 

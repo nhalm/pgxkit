@@ -170,13 +170,13 @@ result, err := db.ExecWithRetry(ctx, config,
 - ✅ Graceful shutdown
 - ✅ Hook system for observability
 
-📚 **Learn More**:
+**Learn More**:
 - **[Examples](Examples)** - Comprehensive usage examples
 - **[Performance Guide](Performance-Guide)** - Optimization strategies
 - **[Production Guide](Production-Guide)** - Deployment best practices
 - **[Testing Guide](Testing-Guide)** - Golden test support
 
-🔧 **Common Patterns**:
+**Common Patterns**:
 - **[API Reference](API-Reference)** - Complete API documentation
 - **[FAQ](FAQ)** - Common questions and solutions
 

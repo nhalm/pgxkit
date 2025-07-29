@@ -381,7 +381,7 @@ db.AddHook(pgxkit.BeforeOperation, func(ctx context.Context, sql string, args []
 
 ## Documentation
 
-📚 **[Visit the pgxkit Wiki](../../wiki)** - Complete documentation with examples and guides
+**[Visit the pgxkit Wiki](../../wiki)** - Complete documentation with examples and guides
 
 ### Quick Links
 - **[Getting Started](../../wiki/Getting-Started)** - Setup and basic usage
