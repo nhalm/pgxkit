@@ -514,24 +514,12 @@ db := pgxkit.NewDB()
 err := db.Connect(ctx, "") // Uses environment variables
 ```
 
-### Integration with Migration Tools
+### Getting DSN for External Tools
 
 ```go
-// Use with golang-migrate
-import (
-    "github.com/golang-migrate/migrate/v4"
-    _ "github.com/golang-migrate/migrate/v4/database/postgres"
-    _ "github.com/golang-migrate/migrate/v4/source/file"
-)
-
-func runMigrations() error {
-    m, err := migrate.New("file://migrations", pgxkit.GetDSN())
-    if err != nil {
-        return err
-    }
-    defer m.Close()
-    
-    return m.Up()
+// Get DSN for external tools
+func getDatabaseDSN() string {
+    return pgxkit.GetDSN()
 }
 ```
 

@@ -609,9 +609,9 @@ func monitorPoolPerformance(db *pgxkit.DB) {
 ### Blue-Green Deployment
 
 ```go
-// Database migration strategy
-func performMigration(db *pgxkit.DB) error {
-    // Run migrations in a transaction
+// Database setup strategy
+func setupDatabase(db *pgxkit.DB) error {
+    // Run database setup in a transaction
     tx, err := db.BeginTx(context.Background(), pgx.TxOptions{})
     if err != nil {
         return err
@@ -619,12 +619,12 @@ func performMigration(db *pgxkit.DB) error {
     defer tx.Rollback(context.Background())
     
     // Apply schema changes
-    if err := runMigrations(tx); err != nil {
+    if err := applySchemaChanges(tx); err != nil {
         return err
     }
     
     // Validate changes
-    if err := validateMigrations(tx); err != nil {
+    if err := validateSchema(tx); err != nil {
         return err
     }
     
@@ -645,8 +645,8 @@ func readinessCheck(db *pgxkit.DB) bool {
         return false
     }
     
-    // Check if migrations are complete
-    if !areMigrationsComplete(db) {
+    // Check if database setup is complete
+    if !isDatabaseReady(db) {
         return false
     }
     

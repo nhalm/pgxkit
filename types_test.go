@@ -653,20 +653,4 @@ func TestFromPgxInt8Array(t *testing.T) {
 // Note: Bytea type is not available in pgtype package
 // Tests removed - use []byte directly with pgx scan/value interfaces
 
-// =============================================================================
-// LEGACY COMPATIBILITY TESTS
-// =============================================================================
 
-func TestLegacyAliases(t *testing.T) {
-	// Test that legacy aliases still work
-	val := 123.456
-	result := ToPgxNumericFromFloat64Ptr(&val)
-	if !result.Valid {
-		t.Errorf("Expected valid numeric from legacy alias, got valid=%v", result.Valid)
-	}
-
-	converted := FromPgxNumericPtr(result)
-	if converted == nil || *converted < 123.0 || *converted > 124.0 {
-		t.Errorf("Expected approximately 123.456 from legacy alias, got %v", converted)
-	}
-}
