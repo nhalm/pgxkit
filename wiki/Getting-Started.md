@@ -1,6 +1,18 @@
-# pgxkit Quick Start Guide
+# Getting Started with pgxkit
+
+**[← Back to Home](Home)**
 
 Get up and running with pgxkit in under 5 minutes.
+
+## Table of Contents
+- [Prerequisites](#prerequisites)
+- [Step 1: Install pgxkit](#step-1-install-pgxkit)
+- [Step 2: Set Environment Variables](#step-2-set-environment-variables)
+- [Step 3: Create Your First App](#step-3-create-your-first-app)
+- [Step 4: Run Your App](#step-4-run-your-app)
+- [Step 5: Add Production Features](#step-5-add-production-features)
+- [What's Next?](#whats-next)
+- [Troubleshooting](#troubleshooting)
 
 ## Prerequisites
 
@@ -159,14 +171,14 @@ result, err := db.ExecWithRetry(ctx, config,
 - ✅ Hook system for observability
 
 📚 **Learn More**:
-- [Full Documentation](README.md) - Complete feature guide
-- [Examples](examples.md) - Comprehensive usage examples
-- [Testing Guide](examples.md#testing) - Golden test support
+- **[Examples](Examples)** - Comprehensive usage examples
+- **[Performance Guide](Performance-Guide)** - Optimization strategies
+- **[Production Guide](Production-Guide)** - Deployment best practices
+- **[Testing Guide](Testing-Guide)** - Golden test support
 
 🔧 **Common Patterns**:
-- [Hook System](examples.md#hook-system) - Logging, tracing, metrics
-- [Type Helpers](examples.md#type-helpers) - Clean architecture conversions
-- [Error Handling](README.md#error-handling) - Structured error types
+- **[API Reference](API-Reference)** - Complete API documentation
+- **[FAQ](FAQ)** - Common questions and solutions
 
 ## Troubleshooting
 
@@ -189,8 +201,24 @@ if err := db.HealthCheck(ctx); err != nil {
 }
 ```
 
+### Common Solutions
+
+| Issue | Solution |
+|-------|----------|
+| Connection timeout | Check firewall and network connectivity |
+| Authentication failed | Verify username/password and database permissions |
+| Database not found | Ensure database exists and name is correct |
+| SSL errors | Check `POSTGRES_SSLMODE` setting |
+
+## See Also
+
+- **[Examples](Examples)** - More comprehensive examples
+- **[Performance Guide](Performance-Guide)** - Optimize your application
+- **[Production Guide](Production-Guide)** - Deploy to production
+- **[Contributing](Contributing)** - Help improve pgxkit
+
 ---
 
-**That's it!** You now have a production-ready PostgreSQL application with pgxkit. 
+**[← Back to Home](Home)**
 
-The entire setup takes under 5 minutes and gives you a solid foundation for building scalable database applications. 
+*Last updated: December 2024* 
