@@ -379,6 +379,16 @@ db.AddHook(pgxkit.BeforeOperation, func(ctx context.Context, sql string, args []
 })
 ```
 
+## Documentation
+
+- **[GitHub Wiki](../../wiki)** - Interactive documentation with examples and guides
+- **[Performance Guide](PERFORMANCE.md)** - Optimization strategies and best practices  
+- **[Production Guide](PRODUCTION.md)** - Deployment and production considerations
+- **[Testing Guide](TESTING.md)** - Testing strategies and golden tests
+- **[Quick Start](QUICKSTART.md)** - Get started in 5 minutes
+- **[Examples](examples.md)** - Practical code examples and use cases
+- **[Wiki Sync Guide](docs/WIKI_SYNC.md)** - Understanding the automated wiki synchronization
+
 ## Contributing
 
 We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
