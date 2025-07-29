@@ -381,16 +381,20 @@ db.AddHook(pgxkit.BeforeOperation, func(ctx context.Context, sql string, args []
 
 ## Documentation
 
-- **[GitHub Wiki](../../wiki)** - Interactive documentation with examples and guides
-- **[Performance Guide](PERFORMANCE.md)** - Optimization strategies and best practices  
-- **[Production Guide](PRODUCTION.md)** - Deployment and production considerations
-- **[Testing Guide](TESTING.md)** - Testing strategies and golden tests
-- **[Quick Start](QUICKSTART.md)** - Get started in 5 minutes
-- **[Examples](examples.md)** - Practical code examples and use cases
+📚 **[Visit the pgxkit Wiki](../../wiki)** - Complete documentation with examples and guides
+
+### Quick Links
+- **[Getting Started](../../wiki/Getting-Started)** - Setup and basic usage
+- **[API Reference](../../wiki/API-Reference)** - Complete API documentation  
+- **[Examples](../../wiki/Examples)** - Practical code examples and use cases
+- **[Performance Guide](../../wiki/Performance-Guide)** - Optimization strategies
+- **[Production Guide](../../wiki/Production-Guide)** - Deployment best practices
+- **[Testing Guide](../../wiki/Testing-Guide)** - Testing strategies and golden tests
+- **[FAQ](../../wiki/FAQ)** - Frequently asked questions
 
 ## Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+We welcome contributions! Please see our **[Contributing Guide](../../wiki/Contributing)** for details.
 
 ## License
 

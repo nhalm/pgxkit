@@ -1,5 +1,7 @@
 # Performance Optimization Guide
 
+**[← Back to Home](Home)**
+
 This guide covers strategies and techniques for optimizing database performance when using pgxkit in your applications.
 
 ## Table of Contents
@@ -194,36 +196,6 @@ func userExists(db *pgxkit.DB, email string) (bool, error) {
     
     return exists, err
 }
-
-// Good: Use LIMIT to prevent large result sets
-func getRecentOrders(db *pgxkit.DB, userID int, limit int) ([]Order, error) {
-    if limit <= 0 || limit > 1000 {
-        limit = 100 // Reasonable default
-    }
-    
-    rows, err := db.ReadQuery(context.Background(), `
-        SELECT id, user_id, total, created_at
-        FROM orders 
-        WHERE user_id = $1 
-        ORDER BY created_at DESC 
-        LIMIT $2
-    `, userID, limit)
-    if err != nil {
-        return nil, err
-    }
-    defer rows.Close()
-    
-    var orders []Order
-    for rows.Next() {
-        var order Order
-        if err := rows.Scan(&order.ID, &order.UserID, &order.Total, &order.CreatedAt); err != nil {
-            return nil, err
-        }
-        orders = append(orders, order)
-    }
-    
-    return orders, nil
-}
 ```
 
 ### Batch Operations
@@ -313,16 +285,6 @@ func (qc *QueryCache) Get(key string) (interface{}, bool) {
     return entry.Data, true
 }
 
-func (qc *QueryCache) Set(key string, data interface{}) {
-    qc.mutex.Lock()
-    defer qc.mutex.Unlock()
-    
-    qc.cache[key] = CacheEntry{
-        Data:      data,
-        ExpiresAt: time.Now().Add(qc.ttl),
-    }
-}
-
 // Cached query example
 func getCachedUser(db *pgxkit.DB, cache *QueryCache, userID int) (*User, error) {
     cacheKey := fmt.Sprintf("user:%d", userID)
@@ -397,20 +359,6 @@ func isReadQuery(sql string) bool {
            strings.HasPrefix(sql, "WITH") ||
            strings.HasPrefix(sql, "SHOW") ||
            strings.HasPrefix(sql, "EXPLAIN")
-}
-
-// Repository with smart routing
-type UserRepository struct {
-    router *QueryRouter
-}
-
-func (r *UserRepository) GetUser(ctx context.Context, id int) (*User, error) {
-    // Automatically uses read pool
-    row := r.router.ExecuteQuery(ctx, "SELECT id, name, email FROM users WHERE id = $1", id)
-    
-    var user User
-    err := row.Scan(&user.ID, &user.Name, &user.Email)
-    return &user, err
 }
 ```
 
@@ -584,127 +532,6 @@ func setupPerformanceMonitoring(db *pgxkit.DB, metrics *PerformanceMetrics) {
         
         return nil
     })
-    
-    // Pool utilization monitoring
-    go func() {
-        ticker := time.NewTicker(30 * time.Second)
-        defer ticker.Stop()
-        
-        for range ticker.C {
-            if stats := db.Stats(); stats != nil {
-                utilization := float64(stats.AcquiredConns()) / float64(stats.MaxConns())
-                metrics.PoolUtilization.WithLabelValues("write").Set(utilization)
-            }
-            
-            if stats := db.ReadStats(); stats != nil {
-                utilization := float64(stats.AcquiredConns()) / float64(stats.MaxConns())
-                metrics.PoolUtilization.WithLabelValues("read").Set(utilization)
-            }
-        }
-    }()
-}
-```
-
-### Query Performance Analysis
-
-```go
-type QueryAnalyzer struct {
-    db             *pgxkit.DB
-    slowQueryThreshold time.Duration
-    queries        map[string]*QueryStats
-    mutex          sync.RWMutex
-}
-
-type QueryStats struct {
-    SQL           string
-    Count         int64
-    TotalDuration time.Duration
-    MinDuration   time.Duration
-    MaxDuration   time.Duration
-    LastExecuted  time.Time
-}
-
-func NewQueryAnalyzer(db *pgxkit.DB, slowQueryThreshold time.Duration) *QueryAnalyzer {
-    analyzer := &QueryAnalyzer{
-        db:             db,
-        slowQueryThreshold: slowQueryThreshold,
-        queries:        make(map[string]*QueryStats),
-    }
-    
-    // Add performance hooks
-    db.AddHook(pgxkit.BeforeOperation, analyzer.beforeQuery)
-    db.AddHook(pgxkit.AfterOperation, analyzer.afterQuery)
-    
-    return analyzer
-}
-
-func (qa *QueryAnalyzer) beforeQuery(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-    return context.WithValue(ctx, "query_start", time.Now())
-}
-
-func (qa *QueryAnalyzer) afterQuery(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-    start, ok := ctx.Value("query_start").(time.Time)
-    if !ok {
-        return nil
-    }
-    
-    duration := time.Since(start)
-    normalizedSQL := normalizeSQL(sql)
-    
-    qa.mutex.Lock()
-    defer qa.mutex.Unlock()
-    
-    stats, exists := qa.queries[normalizedSQL]
-    if !exists {
-        stats = &QueryStats{
-            SQL:         sql,
-            MinDuration: duration,
-            MaxDuration: duration,
-        }
-        qa.queries[normalizedSQL] = stats
-    }
-    
-    stats.Count++
-    stats.TotalDuration += duration
-    stats.LastExecuted = time.Now()
-    
-    if duration < stats.MinDuration {
-        stats.MinDuration = duration
-    }
-    if duration > stats.MaxDuration {
-        stats.MaxDuration = duration
-    }
-    
-    // Log slow queries
-    if duration > qa.slowQueryThreshold {
-        avgDuration := stats.TotalDuration / time.Duration(stats.Count)
-        log.Printf("SLOW QUERY: %s (duration: %v, avg: %v, count: %d)",
-            sql, duration, avgDuration, stats.Count)
-    }
-    
-    return nil
-}
-
-func (qa *QueryAnalyzer) GetSlowQueries() []*QueryStats {
-    qa.mutex.RLock()
-    defer qa.mutex.RUnlock()
-    
-    var slowQueries []*QueryStats
-    for _, stats := range qa.queries {
-        avgDuration := stats.TotalDuration / time.Duration(stats.Count)
-        if avgDuration > qa.slowQueryThreshold {
-            slowQueries = append(slowQueries, stats)
-        }
-    }
-    
-    // Sort by average duration
-    sort.Slice(slowQueries, func(i, j int) bool {
-        avgI := slowQueries[i].TotalDuration / time.Duration(slowQueries[i].Count)
-        avgJ := slowQueries[j].TotalDuration / time.Duration(slowQueries[j].Count)
-        return avgI > avgJ
-    })
-    
-    return slowQueries
 }
 ```
 
@@ -747,72 +574,6 @@ func TestQueryPerformance(t *testing.T) {
         
         if count == 0 {
             t.Error("Expected search results")
-        }
-    })
-    
-    t.Run("recent_orders_performance", func(t *testing.T) {
-        // Another query plan to capture
-        rows, err := db.Query(context.Background(), `
-            SELECT o.id, o.total, o.created_at, u.name
-            FROM orders o
-            JOIN users u ON o.user_id = u.id
-            WHERE o.created_at > NOW() - INTERVAL '7 days'
-            ORDER BY o.created_at DESC
-            LIMIT 100
-        `)
-        if err != nil {
-            t.Fatal(err)
-        }
-        defer rows.Close()
-    })
-}
-```
-
-### Performance Benchmarking
-
-```go
-func BenchmarkUserQueries(b *testing.B) {
-    testDB := setupTestDB(b)
-    createTestData(b, testDB, 10000)
-    
-    b.Run("GetUserByID", func(b *testing.B) {
-        ctx := context.Background()
-        
-        b.ResetTimer()
-        for i := 0; i < b.N; i++ {
-            userID := rand.Intn(10000) + 1
-            
-            var user User
-            err := testDB.QueryRow(ctx,
-                "SELECT id, name, email FROM users WHERE id = $1",
-                userID).Scan(&user.ID, &user.Name, &user.Email)
-            if err != nil {
-                b.Fatal(err)
-            }
-        }
-    })
-    
-    b.Run("SearchUsers", func(b *testing.B) {
-        ctx := context.Background()
-        searchTerms := []string{"john", "jane", "bob", "alice"}
-        
-        b.ResetTimer()
-        for i := 0; i < b.N; i++ {
-            term := searchTerms[i%len(searchTerms)]
-            
-            rows, err := testDB.Query(ctx,
-                "SELECT id, name, email FROM users WHERE name ILIKE $1 LIMIT 10",
-                "%"+term+"%")
-            if err != nil {
-                b.Fatal(err)
-            }
-            
-            // Consume results
-            for rows.Next() {
-                var user User
-                rows.Scan(&user.ID, &user.Name, &user.Email)
-            }
-            rows.Close()
         }
     })
 }
@@ -1042,4 +803,18 @@ func bToKb(b uint64) uint64 {
    - Stream large result sets
    - Implement proper error handling
 
-Following these performance optimization strategies will help you build high-performance applications with pgxkit while maintaining reliability and scalability. 
+## See Also
+
+- **[Getting Started](Getting-Started)** - Basic setup and configuration
+- **[Examples](Examples)** - Practical code examples
+- **[Production Guide](Production-Guide)** - Deployment and production considerations
+- **[Testing Guide](Testing-Guide)** - Testing strategies and golden tests
+- **[API Reference](API-Reference)** - Complete API documentation
+
+---
+
+**[← Back to Home](Home)**
+
+*Following these performance optimization strategies will help you build high-performance applications with pgxkit while maintaining reliability and scalability.*
+
+*Last updated: December 2024* 
