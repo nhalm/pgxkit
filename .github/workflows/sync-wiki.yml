@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - "wiki-templates/**"
+      - "wiki/**"
   gollum:
 
 env:
@@ -23,14 +23,14 @@ jobs:
       
       - name: Update timestamp in Home.md
         run: |
-          # Update the timestamp in the Home template before syncing
-          TIMESTAMP=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
-          sed -i "s/\*Last updated: \[Auto-generated timestamp will be inserted here during sync\]\*/\*Last updated: $TIMESTAMP\*/" wiki-templates/Home.md
+          # Update the timestamp in the Home file before syncing
+          TIMESTAMP=$(date -u '+%B %Y')
+          sed -i "s/\*Last updated: December 2024\*/\*Last updated: $TIMESTAMP\*/" wiki/Home.md
       
-      - name: Sync wiki-templates to GitHub Wiki
+      - name: Sync wiki to GitHub Wiki
         uses: newrelic/wiki-sync-action@main
         with:
-          source: wiki-templates
+          source: wiki
           destination: wiki
           token: ${{ secrets.GITHUB_TOKEN }}
           gitAuthorName: ${{ env.GIT_AUTHOR_NAME }}
@@ -47,11 +47,11 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           ref: main
       
-      - name: Sync GitHub Wiki to wiki-templates
+      - name: Sync GitHub Wiki to wiki directory
         uses: newrelic/wiki-sync-action@main
         with:
           source: wiki
-          destination: wiki-templates
+          destination: wiki
           token: ${{ secrets.GITHUB_TOKEN }}
           gitAuthorName: ${{ env.GIT_AUTHOR_NAME }}
           gitAuthorEmail: ${{ env.GIT_AUTHOR_EMAIL }}
@@ -60,8 +60,8 @@ jobs:
       - name: Reset timestamp placeholder in Home.md
         run: |
           # Reset timestamp to placeholder after syncing from wiki
-          if [ -f wiki-templates/Home.md ]; then
-            sed -i 's/\*Last updated: [0-9-]* [0-9:]* UTC\*/\*Last updated: [Auto-generated timestamp will be inserted here during sync]\*/' wiki-templates/Home.md
+          if [ -f wiki/Home.md ]; then
+            sed -i 's/\*Last updated: [A-Za-z]* [0-9]*\*/\*Last updated: December 2024\*/' wiki/Home.md
           fi
       
       - name: Commit timestamp reset
@@ -71,7 +71,7 @@ jobs:
           else
             git config --local user.email "${{ env.GIT_AUTHOR_EMAIL }}"
             git config --local user.name "${{ env.GIT_AUTHOR_NAME }}"
-            git add wiki-templates/Home.md
+            git add wiki/Home.md
             git commit -m "chore(docs): Reset timestamp placeholder after wiki sync [skip-ci]"
             git push
           fi 
