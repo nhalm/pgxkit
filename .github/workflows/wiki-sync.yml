@@ -6,7 +6,6 @@ on:
       - main
     paths:
       - 'docs/**'
-      - 'wiki/**'
   workflow_dispatch:
 
 permissions:
@@ -31,16 +30,14 @@ jobs:
 
       - name: Copy documentation files to wiki
         run: |
-          # Preserve wiki-specific files (sidebar, footer, etc.)
-          find wiki/ -name "*.md" ! -name "_*.md" -delete
+          # Remove existing files (except .git)
+          find wiki/ -name "*.md" -delete
           
-          # Copy all markdown files from wiki/ directory to wiki root
-          if [ -d "wiki" ]; then
-            find wiki/ -name "*.md" -exec cp {} wiki/ \;
-          fi
+          # Copy all markdown files from docs/ to wiki/
+          cp docs/*.md wiki/
           
           # List files for verification
-          echo "Wiki files after sync:"
+          echo "Wiki files synchronized:"
           ls -la wiki/ | grep -E "\.(md)$" | sort
 
       - name: Commit and push to wiki
