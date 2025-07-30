@@ -6,6 +6,12 @@ on:
       - main
     paths:
       - "wiki/**"
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+    paths:
+      - "wiki/**"
   gollum:
 
 env:
@@ -16,7 +22,7 @@ jobs:
   sync-docs-to-wiki:
     name: Sync Documentation to Wiki
     runs-on: ubuntu-latest
-    if: github.event_name != 'gollum'
+    if: github.event_name != 'gollum' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true))
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
