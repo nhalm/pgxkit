@@ -7,8 +7,10 @@ This directory contains the source documentation that automatically syncs to the
 When files in this `docs/` directory are modified and pushed to the main branch, the wiki sync workflow automatically:
 
 1. Copies all `.md` files from `docs/` to the repository wiki
-2. Preserves existing wiki-specific files like `_Sidebar.md` and `_Footer.md`
+2. Maintains wiki-specific files like `_Sidebar.md` and `_Footer.md` 
 3. Commits changes with a descriptive message including source SHA
+
+This is the **single source of truth** for all documentation - edit files here, not in the wiki directly.
 
 ## Workflow
 
