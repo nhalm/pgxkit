@@ -25,7 +25,7 @@ jobs:
     if: github.event_name != 'gollum' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true))
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       
       - name: Update timestamp in Home.md
         run: |
@@ -48,7 +48,7 @@ jobs:
     if: github.event_name == 'gollum'
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           ref: main
