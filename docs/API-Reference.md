@@ -537,7 +537,23 @@ Testing utilities for database operations in tests.
 func NewTestDB() *TestDB
 ```
 
-Creates a new test database instance with testing utilities.
+Creates a new unconnected test database instance with testing utilities. Call `Connect()` to establish the database connection.
+
+**Example:**
+```go
+func TestUserQueries(t *testing.T) {
+    testDB := pgxkit.NewTestDB()
+    ctx := context.Background()
+    err := testDB.Connect(ctx, "") // Uses TEST_DATABASE_URL env var
+    if err != nil {
+        t.Skip("Test database not available:", err)
+    }
+    defer testDB.Shutdown(ctx)
+
+    // Or connect with explicit DSN:
+    // err := testDB.Connect(ctx, "postgres://user:pass@localhost/testdb")
+}
+```
 
 ### EnableGolden
 
@@ -551,8 +567,15 @@ Enables golden testing to capture and compare query execution plans for performa
 ```go
 func TestUserQueries(t *testing.T) {
     testDB := pgxkit.NewTestDB()
+    ctx := context.Background()
+    err := testDB.Connect(ctx, "")
+    if err != nil {
+        t.Skip("Test database not available:", err)
+    }
+    defer testDB.Shutdown(ctx)
+
     db := testDB.EnableGolden(t, "TestUserQueries")
-    
+
     // Queries will have their EXPLAIN plans captured
     rows, err := db.Query(ctx, "SELECT * FROM users WHERE active = true")
     // ...

@@ -19,10 +19,9 @@ func TestNewTestDB(t *testing.T) {
 		t.Error("TestDB should wrap a valid DB instance")
 	}
 
-	// If no test database is available, writePool will be nil
-	if testDB.writePool == nil {
-		t.Skip("TEST_DATABASE_URL not set, skipping test")
-		return
+	// New pattern: TestDB should be unconnected initially
+	if testDB.writePool != nil {
+		t.Error("NewTestDB should return unconnected instance")
 	}
 }
 

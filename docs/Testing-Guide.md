@@ -58,18 +58,26 @@ import (
 func setupTestDB(t *testing.T) *pgxkit.TestDB {
     // Create test database connection
     testDB := pgxkit.NewTestDB()
-    
-    // Setup database schema and initial data
-    err := testDB.Setup()
+
+    // Connect to test database (uses TEST_DATABASE_URL env var)
+    ctx := context.Background()
+    err := testDB.Connect(ctx, "")
     if err != nil {
         t.Skip("Test database not available:", err)
     }
-    
+
+    // Setup database schema and initial data
+    err = testDB.Setup()
+    if err != nil {
+        t.Skip("Test database setup failed:", err)
+    }
+
     // Clean up after test
     t.Cleanup(func() {
         testDB.Clean()
+        testDB.Shutdown(ctx)
     })
-    
+
     return testDB
 }
 ```
@@ -757,15 +765,22 @@ func BenchmarkUserRepository_CreateUser(b *testing.B) {
 
 func setupBenchmarkDB(b *testing.B) *pgxkit.TestDB {
     testDB := pgxkit.NewTestDB()
-    err := testDB.Setup()
+    ctx := context.Background()
+    err := testDB.Connect(ctx, "")
     if err != nil {
         b.Skip("Test database not available:", err)
     }
-    
+
+    err = testDB.Setup()
+    if err != nil {
+        b.Skip("Test database setup failed:", err)
+    }
+
     b.Cleanup(func() {
         testDB.Clean()
+        testDB.Shutdown(ctx)
     })
-    
+
     return testDB
 }
 ```

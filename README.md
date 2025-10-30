@@ -220,12 +220,19 @@ if err := db.HealthCheck(ctx); err != nil {
 ```go
 func TestUserOperations(t *testing.T) {
     testDB := pgxkit.NewTestDB()
-    err := testDB.Setup()
+    ctx := context.Background()
+    err := testDB.Connect(ctx, "") // Uses TEST_DATABASE_URL env var
     if err != nil {
         t.Skip("Test database not available")
     }
+    defer testDB.Shutdown(ctx)
+
+    err = testDB.Setup()
+    if err != nil {
+        t.Skip("Test database setup failed")
+    }
     defer testDB.Clean()
-    
+
     // Use testDB.DB for your tests
     _, err = testDB.Exec(ctx, "INSERT INTO users ...")
     // ... test assertions
@@ -237,12 +244,19 @@ func TestUserOperations(t *testing.T) {
 ```go
 func TestUserQueries(t *testing.T) {
     testDB := pgxkit.NewTestDB()
+    ctx := context.Background()
+    err := testDB.Connect(ctx, "")
+    if err != nil {
+        t.Skip("Test database not available")
+    }
+    defer testDB.Shutdown(ctx)
+
     testDB.Setup()
     defer testDB.Clean()
-    
+
     // Enable golden test hooks - captures EXPLAIN plans automatically
     db := testDB.EnableGolden(t, "TestUserQueries")
-    
+
     // These queries will have their EXPLAIN plans captured
     rows, err := db.Query(ctx, "SELECT * FROM users WHERE active = true")
     // ... more queries
