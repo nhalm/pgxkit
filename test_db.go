@@ -19,28 +19,22 @@ type TestDB struct {
 	*DB
 }
 
-// NewTestDB creates a new TestDB instance using the shared test pool.
-// The test pool is automatically configured from the TEST_DATABASE_URL environment variable.
-// If no test database is available, the TestDB will have nil pools and tests should skip.
+// NewTestDB creates a new unconnected TestDB instance.
+// Call Connect() to establish the database connection.
 //
 // Example:
 //
 //	func TestUserOperations(t *testing.T) {
 //	    testDB := pgxkit.NewTestDB()
-//	    err := testDB.Setup()
+//	    err := testDB.Connect(context.Background(), "") // uses TEST_DATABASE_URL env var
 //	    if err != nil {
 //	        t.Skip("Test database not available")
 //	    }
-//	    defer testDB.Clean()
+//	    defer testDB.Shutdown(context.Background())
 //	    // ... test code
 //	}
 func NewTestDB() *TestDB {
-	pool := getTestPool()
-	if pool == nil {
-		// Return a TestDB with nil pools - tests will handle the skip
-		return &TestDB{DB: NewDBWithPool(nil)}
-	}
-	return &TestDB{DB: NewDBWithPool(pool)}
+	return &TestDB{DB: NewDB()}
 }
 
 // Setup prepares the database for testing.
@@ -324,11 +318,20 @@ func (db *DB) AssertGolden(t *testing.T, testName string) {
 	}
 }
 
-// RequireDB ensures a test database is available or skips the test
+// RequireDB ensures a test database is available or skips the test.
+// It creates a TestDB and connects using TEST_DATABASE_URL environment variable.
 func RequireDB(t *testing.T) *TestDB {
-	testDB := NewTestDB()
-	if testDB.writePool == nil {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL not set, skipping test")
+		return nil
+	}
+
+	testDB := NewTestDB()
+	ctx := context.Background()
+	err := testDB.Connect(ctx, dsn)
+	if err != nil {
+		t.Skipf("Failed to connect to test database: %v", err)
 		return nil
 	}
 	return testDB
