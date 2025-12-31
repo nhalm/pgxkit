@@ -2,7 +2,6 @@ package pgxkit
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/jackc/pgx/v5"
@@ -92,38 +91,6 @@ func (h *hooks) addHook(hookType HookType, hookFunc HookFunc) {
 		h.afterTransaction = append(h.afterTransaction, hookFunc)
 	case OnShutdown:
 		h.onShutdown = append(h.onShutdown, hookFunc)
-	}
-}
-
-// AddConnectionHook adds a connection-level hook
-func (h *hooks) addConnectionHook(hookType string, hookFunc interface{}) error {
-	switch hookType {
-	case "OnConnect":
-		if fn, ok := hookFunc.(func(*pgx.Conn) error); ok {
-			h.connectionHooks.AddOnConnect(fn)
-			return nil
-		}
-		return fmt.Errorf("OnConnect hook must be of type func(*pgx.Conn) error")
-	case "OnDisconnect":
-		if fn, ok := hookFunc.(func(*pgx.Conn)); ok {
-			h.connectionHooks.AddOnDisconnect(fn)
-			return nil
-		}
-		return fmt.Errorf("OnDisconnect hook must be of type func(*pgx.Conn)")
-	case "OnAcquire":
-		if fn, ok := hookFunc.(func(context.Context, *pgx.Conn) error); ok {
-			h.connectionHooks.AddOnAcquire(fn)
-			return nil
-		}
-		return fmt.Errorf("OnAcquire hook must be of type func(context.Context, *pgx.Conn) error")
-	case "OnRelease":
-		if fn, ok := hookFunc.(func(*pgx.Conn)); ok {
-			h.connectionHooks.AddOnRelease(fn)
-			return nil
-		}
-		return fmt.Errorf("OnRelease hook must be of type func(*pgx.Conn)")
-	default:
-		return fmt.Errorf("unknown connection hook type: %s", hookType)
 	}
 }
 
@@ -379,39 +346,49 @@ func (h *hooks) configurePool(config *pgxpool.Config) {
 // ConfigurePool configures a pgxpool.Config with the connection hooks
 // This integrates the hooks with the actual pool lifecycle events
 func (ch *ConnectionHooks) ConfigurePool(config *pgxpool.Config) {
-	// Store original callbacks if they exist
 	originalAfterConnect := config.AfterConnect
 	originalBeforeClose := config.BeforeClose
+	originalPrepareConn := config.PrepareConn
+	originalAfterRelease := config.AfterRelease
 
-	// Set up AfterConnect hook that combines original callback with our hooks
+	// AfterConnect: called once when connection is created
 	config.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
-		// Execute original callback first
 		if originalAfterConnect != nil {
 			if err := originalAfterConnect(ctx, conn); err != nil {
 				return err
 			}
 		}
-
-		// Execute our OnConnect hooks
-		if err := ch.ExecuteOnConnect(conn); err != nil {
-			return err
-		}
-
-		// Execute our OnAcquire hooks
-		return ch.ExecuteOnAcquire(ctx, conn)
+		return ch.ExecuteOnConnect(conn)
 	}
 
-	// Set up BeforeClose hook that combines original callback with our hooks
+	// BeforeClose: called once when connection is destroyed
 	config.BeforeClose = func(conn *pgx.Conn) {
-		// Execute our OnDisconnect hooks first
 		ch.ExecuteOnDisconnect(conn)
-
-		// Execute our OnRelease hooks
-		ch.ExecuteOnRelease(conn)
-
-		// Execute original callback last
 		if originalBeforeClose != nil {
 			originalBeforeClose(conn)
 		}
+	}
+
+	// PrepareConn: called every time connection is checked out from pool
+	config.PrepareConn = func(ctx context.Context, conn *pgx.Conn) (bool, error) {
+		if originalPrepareConn != nil {
+			ok, err := originalPrepareConn(ctx, conn)
+			if !ok || err != nil {
+				return ok, err
+			}
+		}
+		if err := ch.ExecuteOnAcquire(ctx, conn); err != nil {
+			return false, nil // destroy connection on error, retry with new connection
+		}
+		return true, nil
+	}
+
+	// AfterRelease: called every time connection is returned to pool
+	config.AfterRelease = func(conn *pgx.Conn) bool {
+		ch.ExecuteOnRelease(conn)
+		if originalAfterRelease != nil {
+			return originalAfterRelease(conn)
+		}
+		return true // keep connection in pool
 	}
 }

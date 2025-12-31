@@ -58,19 +58,21 @@ Configuration options for database connection pools.
 func NewDB() *DB
 ```
 
-Creates a new unconnected DB instance. Add hooks to this instance, then call `Connect()` to establish the database connection.
+Creates a new unconnected DB instance. Call `Connect()` with options to establish the database connection.
 
 **Example:**
 ```go
 db := pgxkit.NewDB()
-db.AddHook(pgxkit.BeforeOperation, myLoggingHook)
-err := db.Connect(ctx, "postgres://user:pass@localhost/db")
+err := db.Connect(ctx, "postgres://user:pass@localhost/db",
+    pgxkit.WithMaxConns(25),
+    pgxkit.WithBeforeOperation(myLoggingHook),
+)
 ```
 
 ### Connect
 
 ```go
-func (db *DB) Connect(ctx context.Context, dsn string) error
+func (db *DB) Connect(ctx context.Context, dsn string, opts ...ConnectOption) error
 ```
 
 Establishes a database connection with a single pool (same pool for read/write). If dsn is empty, it uses environment variables to construct the connection string.
@@ -78,6 +80,7 @@ Establishes a database connection with a single pool (same pool for read/write).
 **Parameters:**
 - `ctx` - Context for the connection operation
 - `dsn` - Data source name (connection string). If empty, uses environment variables
+- `opts` - Variadic connection options for pool configuration and hooks
 
 **Environment Variables Used:**
 - `POSTGRES_HOST` (default: "localhost")
@@ -89,8 +92,12 @@ Establishes a database connection with a single pool (same pool for read/write).
 
 **Example:**
 ```go
-// Using explicit DSN
-err := db.Connect(ctx, "postgres://user:pass@localhost/db")
+// Using explicit DSN with options
+err := db.Connect(ctx, "postgres://user:pass@localhost/db",
+    pgxkit.WithMaxConns(25),
+    pgxkit.WithMinConns(5),
+    pgxkit.WithBeforeOperation(loggingHook),
+)
 
 // Using environment variables
 err := db.Connect(ctx, "")
@@ -99,7 +106,7 @@ err := db.Connect(ctx, "")
 ### ConnectReadWrite
 
 ```go
-func (db *DB) ConnectReadWrite(ctx context.Context, readDSN, writeDSN string) error
+func (db *DB) ConnectReadWrite(ctx context.Context, readDSN, writeDSN string, opts ...ConnectOption) error
 ```
 
 Establishes separate read and write database connections for optimal performance in read-heavy applications.
@@ -108,12 +115,16 @@ Establishes separate read and write database connections for optimal performance
 - `ctx` - Context for the connection operation
 - `readDSN` - Data source name for read operations (replica)
 - `writeDSN` - Data source name for write operations (primary)
+- `opts` - Variadic connection options (applied to both pools)
 
 **Example:**
 ```go
 err := db.ConnectReadWrite(ctx,
     "postgres://user:pass@read-replica:5432/db",  // Read pool
-    "postgres://user:pass@primary:5432/db")       // Write pool
+    "postgres://user:pass@primary:5432/db",       // Write pool
+    pgxkit.WithMaxConns(25),
+    pgxkit.WithBeforeOperation(loggingHook),
+)
 ```
 
 ### Shutdown
@@ -300,6 +311,8 @@ err := db.WithTransaction(ctx, pgx.TxOptions{}, func(tx pgx.Tx) error {
 
 ## Hook System
 
+Hooks are configured via `ConnectOption` functions passed to `Connect()` or `ConnectReadWrite()`.
+
 ### HookType
 
 ```go
@@ -328,29 +341,64 @@ Universal hook function signature for operation-level hooks.
 - `args` - The arguments for the SQL statement (nil for shutdown hooks)
 - `operationErr` - The error from the operation (nil for before hooks)
 
-### AddHook
+### Operation Hook Options
 
 ```go
-func (db *DB) AddHook(hookType HookType, hookFunc HookFunc)
+func WithBeforeOperation(fn HookFunc) ConnectOption
+func WithAfterOperation(fn HookFunc) ConnectOption
+func WithBeforeTransaction(fn HookFunc) ConnectOption
+func WithAfterTransaction(fn HookFunc) ConnectOption
+func WithOnShutdown(fn HookFunc) ConnectOption
 ```
 
-Adds a hook function for the specified hook type.
+### Connection Hook Options
+
+```go
+func WithOnConnect(fn func(*pgx.Conn) error) ConnectOption
+func WithOnDisconnect(fn func(*pgx.Conn)) ConnectOption
+func WithOnAcquire(fn func(context.Context, *pgx.Conn) error) ConnectOption
+func WithOnRelease(fn func(*pgx.Conn)) ConnectOption
+```
 
 **Example:**
 ```go
-// Logging hook
-db.AddHook(pgxkit.BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-    log.Printf("Executing: %s", sql)
-    return nil
-})
+db := pgxkit.NewDB()
+err := db.Connect(ctx, dsn,
+    // Logging hook
+    pgxkit.WithBeforeOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        log.Printf("Executing: %s", sql)
+        return nil
+    }),
+    // Metrics hook
+    pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        queryCounter.WithLabelValues(operation, status).Inc()
+        return nil
+    }),
+    // Connection setup
+    pgxkit.WithOnConnect(func(conn *pgx.Conn) error {
+        _, err := conn.Exec(context.Background(), "SET application_name = 'myapp'")
+        return err
+    }),
+)
+```
 
-// Metrics hook
-db.AddHook(pgxkit.AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-    duration := time.Since(start) // start from context
-    queryCounter.WithLabelValues(operation, status).Inc()
-    queryDuration.WithLabelValues(operation, status).Observe(duration.Seconds())
-    return nil
-})
+### Pool Configuration Options
+
+```go
+func WithMaxConns(n int32) ConnectOption
+func WithMinConns(n int32) ConnectOption
+func WithMaxConnLifetime(d time.Duration) ConnectOption
+func WithMaxConnIdleTime(d time.Duration) ConnectOption
+```
+
+**Example:**
+```go
+err := db.Connect(ctx, dsn,
+    pgxkit.WithMaxConns(25),
+    pgxkit.WithMinConns(5),
+    pgxkit.WithMaxConnLifetime(time.Hour),
+    pgxkit.WithMaxConnIdleTime(30*time.Minute),
+)
 ```
 
 ## Retry Logic
@@ -614,7 +662,7 @@ All `DB` methods are thread-safe and can be called concurrently from multiple go
 ## Best Practices
 
 1. **Use Read methods for optimization** - `ReadQuery()` and `ReadQueryRow()` when you have read/write splits
-2. **Add hooks early** - Add hooks before calling `Connect()` for proper integration
+2. **Configure via options** - Pass all configuration (pool settings, hooks) as options to `Connect()`
 3. **Handle context cancellation** - All methods respect context cancellation
 4. **Use transactions for consistency** - Group related operations in transactions
 5. **Monitor pool statistics** - Use `Stats()` and `ReadStats()` for monitoring
