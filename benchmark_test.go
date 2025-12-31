@@ -28,9 +28,12 @@ func BenchmarkHookOverhead(b *testing.B) {
 	})
 
 	b.Run("WithBeforeHook", func(b *testing.B) {
-		db := NewDBWithPool(pool)
-		db.AddHook(BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-			// Minimal hook that just returns
+		db := &DB{
+			readPool:  pool,
+			writePool: pool,
+			hooks:     newHooks(),
+		}
+		db.hooks.addHook(BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
 			return nil
 		})
 
@@ -45,11 +48,15 @@ func BenchmarkHookOverhead(b *testing.B) {
 	})
 
 	b.Run("WithBeforeAndAfterHooks", func(b *testing.B) {
-		db := NewDBWithPool(pool)
-		db.AddHook(BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		db := &DB{
+			readPool:  pool,
+			writePool: pool,
+			hooks:     newHooks(),
+		}
+		db.hooks.addHook(BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
 			return nil
 		})
-		db.AddHook(AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		db.hooks.addHook(AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
 			return nil
 		})
 
@@ -64,13 +71,16 @@ func BenchmarkHookOverhead(b *testing.B) {
 	})
 
 	b.Run("WithMultipleHooks", func(b *testing.B) {
-		db := NewDBWithPool(pool)
-		// Add multiple hooks to test overhead scaling
+		db := &DB{
+			readPool:  pool,
+			writePool: pool,
+			hooks:     newHooks(),
+		}
 		for i := 0; i < 5; i++ {
-			db.AddHook(BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+			db.hooks.addHook(BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
 				return nil
 			})
-			db.AddHook(AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+			db.hooks.addHook(AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
 				return nil
 			})
 		}
@@ -175,11 +185,15 @@ func BenchmarkConcurrentOperations(b *testing.B) {
 	})
 
 	b.Run("ConcurrentWithHooks", func(b *testing.B) {
-		dbWithHooks := NewDBWithPool(pool)
-		dbWithHooks.AddHook(BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		dbWithHooks := &DB{
+			readPool:  pool,
+			writePool: pool,
+			hooks:     newHooks(),
+		}
+		dbWithHooks.hooks.addHook(BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
 			return nil
 		})
-		dbWithHooks.AddHook(AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		dbWithHooks.hooks.addHook(AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
 			return nil
 		})
 
@@ -199,7 +213,6 @@ func BenchmarkConcurrentOperations(b *testing.B) {
 func BenchmarkHookExecutionTime(b *testing.B) {
 	ctx := context.Background()
 
-	// Test different hook complexities
 	b.Run("EmptyHook", func(b *testing.B) {
 		hookFunc := func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
 			return nil
@@ -213,7 +226,6 @@ func BenchmarkHookExecutionTime(b *testing.B) {
 
 	b.Run("LoggingHook", func(b *testing.B) {
 		hookFunc := func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-			// Simulate logging overhead
 			_ = sql
 			_ = args
 			return nil
@@ -227,7 +239,6 @@ func BenchmarkHookExecutionTime(b *testing.B) {
 
 	b.Run("TimingHook", func(b *testing.B) {
 		hookFunc := func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-			// Simulate timing overhead
 			_ = time.Now()
 			return nil
 		}

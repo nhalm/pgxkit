@@ -17,7 +17,7 @@
 // Basic Usage:
 //
 //	db := pgxkit.NewDB()
-//	err := db.Connect(ctx, "") // Uses POSTGRES_* env vars
+//	err := db.Connect(ctx, "", pgxkit.WithMaxConns(25))
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
@@ -31,10 +31,13 @@
 //
 // Hook System:
 //
-//	db.AddHook(pgxkit.BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-//	    log.Printf("Executing: %s", sql)
-//	    return nil
-//	})
+//	db := pgxkit.NewDB()
+//	err := db.Connect(ctx, "",
+//	    pgxkit.WithBeforeOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+//	        log.Printf("Executing: %s", sql)
+//	        return nil
+//	    }),
+//	)
 //
 // The package follows a "safety first" design - all default methods use the write pool
 // for consistency, with explicit ReadQuery() methods available for read optimization.
@@ -132,26 +135,167 @@ type DB struct {
 	hooks     *hooks
 	mu        sync.RWMutex
 	shutdown  bool
-	activeOps sync.WaitGroup // Tracks active operations for graceful shutdown
+	activeOps sync.WaitGroup
 }
 
 // DBConfig holds configuration options for database connections.
 // These options are applied when creating connection pools.
 type DBConfig struct {
-	MaxConns        int32         // Maximum number of connections in the pool
-	MinConns        int32         // Minimum number of connections in the pool
-	MaxConnLifetime time.Duration // Maximum lifetime of a connection
-	MaxConnIdleTime time.Duration // Maximum idle time for a connection
+	MaxConns        int32
+	MinConns        int32
+	MaxConnLifetime time.Duration
+	MaxConnIdleTime time.Duration
+}
+
+// ConnectOption configures a database connection.
+type ConnectOption func(*connectConfig)
+
+type connectConfig struct {
+	maxConns        int32
+	minConns        int32
+	maxConnLifetime time.Duration
+	maxConnIdleTime time.Duration
+	readMaxConns    int32
+	readMinConns    int32
+	writeMaxConns   int32
+	writeMinConns   int32
+	hooks           *hooks
+}
+
+func newConnectConfig() *connectConfig {
+	return &connectConfig{
+		hooks: newHooks(),
+	}
+}
+
+func WithMaxConns(n int32) ConnectOption {
+	return func(c *connectConfig) {
+		if n > 0 {
+			c.maxConns = n
+		}
+	}
+}
+
+func WithMinConns(n int32) ConnectOption {
+	return func(c *connectConfig) {
+		if n >= 0 {
+			c.minConns = n
+		}
+	}
+}
+
+func WithMaxConnLifetime(d time.Duration) ConnectOption {
+	return func(c *connectConfig) {
+		if d > 0 {
+			c.maxConnLifetime = d
+		}
+	}
+}
+
+func WithMaxConnIdleTime(d time.Duration) ConnectOption {
+	return func(c *connectConfig) {
+		if d > 0 {
+			c.maxConnIdleTime = d
+		}
+	}
+}
+
+func WithReadMaxConns(n int32) ConnectOption {
+	return func(c *connectConfig) {
+		if n > 0 {
+			c.readMaxConns = n
+		}
+	}
+}
+
+func WithReadMinConns(n int32) ConnectOption {
+	return func(c *connectConfig) {
+		if n >= 0 {
+			c.readMinConns = n
+		}
+	}
+}
+
+func WithWriteMaxConns(n int32) ConnectOption {
+	return func(c *connectConfig) {
+		if n > 0 {
+			c.writeMaxConns = n
+		}
+	}
+}
+
+func WithWriteMinConns(n int32) ConnectOption {
+	return func(c *connectConfig) {
+		if n >= 0 {
+			c.writeMinConns = n
+		}
+	}
+}
+
+func WithBeforeOperation(fn HookFunc) ConnectOption {
+	return func(c *connectConfig) {
+		c.hooks.addHook(BeforeOperation, fn)
+	}
+}
+
+func WithAfterOperation(fn HookFunc) ConnectOption {
+	return func(c *connectConfig) {
+		c.hooks.addHook(AfterOperation, fn)
+	}
+}
+
+func WithBeforeTransaction(fn HookFunc) ConnectOption {
+	return func(c *connectConfig) {
+		c.hooks.addHook(BeforeTransaction, fn)
+	}
+}
+
+func WithAfterTransaction(fn HookFunc) ConnectOption {
+	return func(c *connectConfig) {
+		c.hooks.addHook(AfterTransaction, fn)
+	}
+}
+
+func WithOnShutdown(fn HookFunc) ConnectOption {
+	return func(c *connectConfig) {
+		c.hooks.addHook(OnShutdown, fn)
+	}
+}
+
+func WithOnConnect(fn func(*pgx.Conn) error) ConnectOption {
+	return func(c *connectConfig) {
+		c.hooks.connectionHooks.AddOnConnect(fn)
+	}
+}
+
+func WithOnDisconnect(fn func(*pgx.Conn)) ConnectOption {
+	return func(c *connectConfig) {
+		c.hooks.connectionHooks.AddOnDisconnect(fn)
+	}
+}
+
+func WithOnAcquire(fn func(context.Context, *pgx.Conn) error) ConnectOption {
+	return func(c *connectConfig) {
+		c.hooks.connectionHooks.AddOnAcquire(fn)
+	}
+}
+
+func WithOnRelease(fn func(*pgx.Conn)) ConnectOption {
+	return func(c *connectConfig) {
+		c.hooks.connectionHooks.AddOnRelease(fn)
+	}
 }
 
 // NewDB creates a new unconnected DB instance.
-// Add hooks to this instance, then call Connect() to establish the database connection.
+// Call Connect() with options to establish the database connection.
 //
 // Example:
 //
 //	db := pgxkit.NewDB()
-//	db.AddHook(pgxkit.BeforeOperation, myLoggingHook)
-//	err := db.Connect(ctx, "postgres://user:pass@localhost/db")
+//	err := db.Connect(ctx, "postgres://user:pass@localhost/db",
+//	    pgxkit.WithMaxConns(25),
+//	    pgxkit.WithBeforeOperation(myLoggingHook),
+//	)
 func NewDB() *DB {
 	return &DB{
 		hooks: newHooks(),
@@ -160,7 +304,7 @@ func NewDB() *DB {
 
 // Connect establishes a database connection with a single pool (same pool for read/write).
 // If dsn is empty, it uses environment variables to construct the connection string.
-// The hooks are configured at pool creation time for proper integration.
+// Options are applied to configure pool settings and hooks.
 //
 // This is the recommended approach for most applications as it provides safety
 // by default while still allowing read optimization through ReadQuery methods.
@@ -168,10 +312,16 @@ func NewDB() *DB {
 // Example:
 //
 //	db := pgxkit.NewDB()
-//	err := db.Connect(ctx, "postgres://user:pass@localhost/db")
+//	err := db.Connect(ctx, "postgres://user:pass@localhost/db",
+//	    pgxkit.WithMaxConns(25),
+//	    pgxkit.WithOnConnect(func(conn *pgx.Conn) error {
+//	        _, err := conn.Exec(context.Background(), "SET application_name = 'myapp'")
+//	        return err
+//	    }),
+//	)
 //	// Or use environment variables:
 //	err := db.Connect(ctx, "")
-func (db *DB) Connect(ctx context.Context, dsn string) error {
+func (db *DB) Connect(ctx context.Context, dsn string, opts ...ConnectOption) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
@@ -179,21 +329,36 @@ func (db *DB) Connect(ctx context.Context, dsn string) error {
 		return fmt.Errorf("database is already connected")
 	}
 
-	// Use environment variables if no DSN provided
 	if dsn == "" {
 		dsn = getDSN()
 	}
 
-	// Parse the DSN to get pool config
 	config, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return fmt.Errorf("failed to parse DSN: %w", err)
 	}
 
-	// Configure the pool with hooks
+	cfg := newConnectConfig()
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	if cfg.maxConns > 0 {
+		config.MaxConns = cfg.maxConns
+	}
+	if cfg.minConns > 0 {
+		config.MinConns = cfg.minConns
+	}
+	if cfg.maxConnLifetime > 0 {
+		config.MaxConnLifetime = cfg.maxConnLifetime
+	}
+	if cfg.maxConnIdleTime > 0 {
+		config.MaxConnIdleTime = cfg.maxConnIdleTime
+	}
+
+	db.hooks = cfg.hooks
 	db.hooks.configurePool(config)
 
-	// Create the pool
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		return fmt.Errorf("failed to create pool: %w", err)
@@ -207,7 +372,7 @@ func (db *DB) Connect(ctx context.Context, dsn string) error {
 
 // ConnectReadWrite establishes database connections with separate read and write pools.
 // If readDSN or writeDSN is empty, it uses environment variables to construct the connection string.
-// The hooks are configured at pool creation time for proper integration.
+// Options are applied to both pools.
 //
 // This is useful for applications that want to optimize read performance by routing
 // read queries to read replicas while ensuring writes go to the primary database.
@@ -215,9 +380,11 @@ func (db *DB) Connect(ctx context.Context, dsn string) error {
 // Example:
 //
 //	db := pgxkit.NewDB()
-//	err := db.ConnectReadWrite(ctx, "postgres://user:pass@read-replica/db", "postgres://user:pass@primary/db")
+//	err := db.ConnectReadWrite(ctx, "postgres://user:pass@read-replica/db", "postgres://user:pass@primary/db",
+//	    pgxkit.WithMaxConns(25),
+//	)
 //	// Now ReadQuery methods will use the read pool, while Query/Exec use the write pool
-func (db *DB) ConnectReadWrite(ctx context.Context, readDSN, writeDSN string) error {
+func (db *DB) ConnectReadWrite(ctx context.Context, readDSN, writeDSN string, opts ...ConnectOption) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
@@ -225,7 +392,6 @@ func (db *DB) ConnectReadWrite(ctx context.Context, readDSN, writeDSN string) er
 		return fmt.Errorf("database is already connected")
 	}
 
-	// Use environment variables if no DSN provided
 	if readDSN == "" {
 		readDSN = getDSN()
 	}
@@ -233,29 +399,71 @@ func (db *DB) ConnectReadWrite(ctx context.Context, readDSN, writeDSN string) er
 		writeDSN = getDSN()
 	}
 
-	// Parse read DSN
 	readConfig, err := pgxpool.ParseConfig(readDSN)
 	if err != nil {
 		return fmt.Errorf("failed to parse read DSN: %w", err)
 	}
 
-	// Parse write DSN
 	writeConfig, err := pgxpool.ParseConfig(writeDSN)
 	if err != nil {
 		return fmt.Errorf("failed to parse write DSN: %w", err)
 	}
 
-	// Configure both pools with hooks
+	cfg := newConnectConfig()
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	readMaxConns := cfg.maxConns
+	if cfg.readMaxConns > 0 {
+		readMaxConns = cfg.readMaxConns
+	}
+	if readMaxConns > 0 {
+		readConfig.MaxConns = readMaxConns
+	}
+
+	readMinConns := cfg.minConns
+	if cfg.readMinConns > 0 {
+		readMinConns = cfg.readMinConns
+	}
+	if readMinConns > 0 {
+		readConfig.MinConns = readMinConns
+	}
+
+	writeMaxConns := cfg.maxConns
+	if cfg.writeMaxConns > 0 {
+		writeMaxConns = cfg.writeMaxConns
+	}
+	if writeMaxConns > 0 {
+		writeConfig.MaxConns = writeMaxConns
+	}
+
+	writeMinConns := cfg.minConns
+	if cfg.writeMinConns > 0 {
+		writeMinConns = cfg.writeMinConns
+	}
+	if writeMinConns > 0 {
+		writeConfig.MinConns = writeMinConns
+	}
+
+	if cfg.maxConnLifetime > 0 {
+		readConfig.MaxConnLifetime = cfg.maxConnLifetime
+		writeConfig.MaxConnLifetime = cfg.maxConnLifetime
+	}
+	if cfg.maxConnIdleTime > 0 {
+		readConfig.MaxConnIdleTime = cfg.maxConnIdleTime
+		writeConfig.MaxConnIdleTime = cfg.maxConnIdleTime
+	}
+
+	db.hooks = cfg.hooks
 	db.hooks.configurePool(readConfig)
 	db.hooks.configurePool(writeConfig)
 
-	// Create read pool
 	readPool, err := pgxpool.NewWithConfig(ctx, readConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create read pool: %w", err)
 	}
 
-	// Create write pool
 	writePool, err := pgxpool.NewWithConfig(ctx, writeConfig)
 	if err != nil {
 		readPool.Close()
@@ -381,17 +589,14 @@ func (db *DB) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, err
 	}
 	db.mu.RUnlock()
 
-	// Execute BeforeTransaction hooks
 	if err := db.hooks.executeBeforeTransaction(ctx, "", nil, nil); err != nil {
 		return nil, fmt.Errorf("before transaction hook failed: %w", err)
 	}
 
 	tx, err := db.writePool.BeginTx(ctx, txOptions)
 
-	// Execute AfterTransaction hooks
 	hookErr := db.hooks.executeAfterTransaction(ctx, "", nil, err)
 	if hookErr != nil && err == nil {
-		// If transaction succeeded but hook failed, rollback
 		if tx != nil {
 			tx.Rollback(ctx)
 		}
@@ -399,52 +604,6 @@ func (db *DB) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, err
 	}
 
 	return tx, err
-}
-
-// AddHook adds an operation-level hook to the database.
-// Hooks are executed in the order they are added and provide extensibility
-// for logging, tracing, metrics, circuit breakers, and other cross-cutting concerns.
-//
-// Available hook types:
-//   - BeforeOperation: Called before any query/exec operation
-//   - AfterOperation: Called after any query/exec operation
-//   - BeforeTransaction: Called before starting a transaction
-//   - AfterTransaction: Called after a transaction completes
-//   - OnShutdown: Called during graceful shutdown
-//
-// Example:
-//
-//	db.AddHook(pgxkit.BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-//	    log.Printf("Executing: %s", sql)
-//	    return nil
-//	})
-func (db *DB) AddHook(hookType HookType, hookFunc HookFunc) *DB {
-	db.hooks.addHook(hookType, hookFunc)
-	return db
-}
-
-// AddConnectionHook adds a connection-level hook to the database.
-// These hooks are integrated with pgx's connection lifecycle and are useful
-// for connection setup, validation, and cleanup.
-//
-// Available hook types:
-//   - "OnConnect": Called when a new connection is established
-//   - "OnDisconnect": Called when a connection is closed
-//   - "OnAcquire": Called when a connection is acquired from the pool
-//   - "OnRelease": Called when a connection is returned to the pool
-//
-// Example:
-//
-//	db.AddConnectionHook("OnConnect", func(conn *pgx.Conn) error {
-//	    log.Println("New connection established")
-//	    return nil
-//	})
-//
-// TODO: hookType needs to be an Enum.
-// TODO: this doc needs to be updated to reflect the new hookType Enum and that this is for pgx hooks.
-// TODO: this should be split up into the different pgx hooks. and then we don't need the enum.
-func (db *DB) AddConnectionHook(hookType string, hookFunc interface{}) error {
-	return db.hooks.addConnectionHook(hookType, hookFunc)
 }
 
 // Shutdown gracefully shuts down the database connections.
@@ -471,7 +630,6 @@ func (db *DB) Shutdown(ctx context.Context) error {
 	db.shutdown = true
 	db.mu.Unlock()
 
-	// Wait for active operations to complete with timeout handling
 	done := make(chan struct{})
 	go func() {
 		db.activeOps.Wait()
@@ -480,18 +638,13 @@ func (db *DB) Shutdown(ctx context.Context) error {
 
 	select {
 	case <-done:
-		// All operations completed successfully
 	case <-ctx.Done():
-		// Context timeout - proceed with shutdown anyway
-		// In production, you might want to log this as a warning
 	}
 
-	// Execute shutdown hooks
 	if err := db.hooks.executeOnShutdown(ctx, "", nil, nil); err != nil {
 		return fmt.Errorf("shutdown hook failed: %w", err)
 	}
 
-	// Close pools - handle nil pools gracefully
 	if db.readPool != nil && db.readPool != db.writePool {
 		db.readPool.Close()
 	}
@@ -647,7 +800,7 @@ func (db *DB) QueryRowWithRetry(ctx context.Context, config *RetryConfig, sql st
 	var result pgx.Row
 	err := RetryOperation(ctx, config, func(ctx context.Context) error {
 		result = db.QueryRow(ctx, sql, args...)
-		return nil // QueryRow doesn't return an error directly
+		return nil
 	})
 	if err != nil {
 		return &shutdownRow{err: err}
@@ -671,7 +824,7 @@ func (db *DB) ReadQueryRowWithRetry(ctx context.Context, config *RetryConfig, sq
 	var result pgx.Row
 	err := RetryOperation(ctx, config, func(ctx context.Context) error {
 		result = db.ReadQueryRow(ctx, sql, args...)
-		return nil // QueryRow doesn't return an error directly
+		return nil
 	})
 	if err != nil {
 		return &shutdownRow{err: err}
@@ -690,8 +843,6 @@ func (db *DB) BeginTxWithRetry(ctx context.Context, config *RetryConfig, txOptio
 	return result, err
 }
 
-// Internal execution methods that handle hooks
-
 func (db *DB) executeQuery(ctx context.Context, pool *pgxpool.Pool, sql string, args ...interface{}) (pgx.Rows, error) {
 	db.mu.RLock()
 	if db.shutdown {
@@ -704,18 +855,15 @@ func (db *DB) executeQuery(ctx context.Context, pool *pgxpool.Pool, sql string, 
 	}
 	db.mu.RUnlock()
 
-	// Track active operation for graceful shutdown
 	db.activeOps.Add(1)
 	defer db.activeOps.Done()
 
-	// Execute BeforeOperation hooks
 	if err := db.hooks.executeBeforeOperation(ctx, sql, args, nil); err != nil {
 		return nil, fmt.Errorf("before operation hook failed: %w", err)
 	}
 
 	rows, err := pool.Query(ctx, sql, args...)
 
-	// Execute AfterOperation hooks
 	if hookErr := db.hooks.executeAfterOperation(ctx, sql, args, err); hookErr != nil {
 		if rows != nil {
 			rows.Close()
@@ -740,19 +888,15 @@ func (db *DB) executeQueryRow(ctx context.Context, pool *pgxpool.Pool, sql strin
 	}
 	db.mu.RUnlock()
 
-	// Track active operation for graceful shutdown
 	db.activeOps.Add(1)
 	defer db.activeOps.Done()
 
-	// Execute BeforeOperation hooks
 	if err := db.hooks.executeBeforeOperation(ctx, sql, args, nil); err != nil {
 		return &shutdownRow{err: fmt.Errorf("before operation hook failed: %w", err)}
 	}
 
 	row := pool.QueryRow(ctx, sql, args...)
 
-	// Execute AfterOperation hooks - for QueryRow we can't easily get the error
-	// so we pass nil as the operation error
 	if hookErr := db.hooks.executeAfterOperation(ctx, sql, args, nil); hookErr != nil {
 		return &shutdownRow{err: fmt.Errorf("after operation hook failed: %w", hookErr)}
 	}
@@ -772,18 +916,15 @@ func (db *DB) executeExec(ctx context.Context, pool *pgxpool.Pool, sql string, a
 	}
 	db.mu.RUnlock()
 
-	// Track active operation for graceful shutdown
 	db.activeOps.Add(1)
 	defer db.activeOps.Done()
 
-	// Execute BeforeOperation hooks
 	if err := db.hooks.executeBeforeOperation(ctx, sql, args, nil); err != nil {
 		return pgconn.CommandTag{}, fmt.Errorf("before operation hook failed: %w", err)
 	}
 
 	tag, err := pool.Exec(ctx, sql, args...)
 
-	// Execute AfterOperation hooks
 	if hookErr := db.hooks.executeAfterOperation(ctx, sql, args, err); hookErr != nil {
 		if err == nil {
 			return tag, fmt.Errorf("after operation hook failed: %w", hookErr)
@@ -793,7 +934,6 @@ func (db *DB) executeExec(ctx context.Context, pool *pgxpool.Pool, sql string, a
 	return tag, err
 }
 
-// shutdownRow implements pgx.Row for shutdown scenarios
 type shutdownRow struct {
 	err error
 }

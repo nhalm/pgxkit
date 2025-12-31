@@ -120,46 +120,51 @@ dsn := pgxkit.GetDSN()
 
 ## Hooks System
 
-Add observability and custom functionality through hooks:
+Add observability and custom functionality through connect options:
 
 ```go
 db := pgxkit.NewDB()
-
-// Add logging hook
-db.AddHook(pgxkit.BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-    log.Printf("Executing: %s", sql)
-    return nil
-})
-
-// Add metrics hook
-db.AddHook(pgxkit.AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-    if operationErr != nil {
-        metrics.IncrementCounter("db.errors")
-    }
-    return nil
-})
-
-// Add connection-level hooks
-db.AddConnectionHook("OnConnect", func(conn *pgx.Conn) error {
-    log.Println("New connection established")
-    return nil
-})
+err := db.Connect(ctx, dsn,
+    // Logging hook
+    pgxkit.WithBeforeOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        log.Printf("Executing: %s", sql)
+        return nil
+    }),
+    // Metrics hook
+    pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        if operationErr != nil {
+            metrics.IncrementCounter("db.errors")
+        }
+        return nil
+    }),
+    // Connection setup
+    pgxkit.WithOnConnect(func(conn *pgx.Conn) error {
+        log.Println("New connection established")
+        return nil
+    }),
+)
 ```
 
-### Available Hook Types
+### Available Options
 
-**Operation-level hooks:**
-- `BeforeOperation` - Before any query/exec
-- `AfterOperation` - After any query/exec
-- `BeforeTransaction` - Before transaction starts
-- `AfterTransaction` - After transaction completes
-- `OnShutdown` - During graceful shutdown
+**Pool configuration:**
+- `WithMaxConns(n int32)` - Maximum connections in pool
+- `WithMinConns(n int32)` - Minimum connections in pool
+- `WithMaxConnLifetime(d time.Duration)` - Maximum connection lifetime
+- `WithMaxConnIdleTime(d time.Duration)` - Maximum idle time
 
-**Connection-level hooks:**
-- `OnConnect` - When new connection is established
-- `OnDisconnect` - When connection is closed
-- `OnAcquire` - When connection is acquired from pool
-- `OnRelease` - When connection is returned to pool
+**Operation hooks:**
+- `WithBeforeOperation(fn)` - Before any query/exec
+- `WithAfterOperation(fn)` - After any query/exec
+- `WithBeforeTransaction(fn)` - Before transaction starts
+- `WithAfterTransaction(fn)` - After transaction completes
+- `WithOnShutdown(fn)` - During graceful shutdown
+
+**Connection hooks:**
+- `WithOnConnect(fn)` - When new connection is established
+- `WithOnDisconnect(fn)` - When connection is closed
+- `WithOnAcquire(fn)` - When connection is acquired from pool
+- `WithOnRelease(fn)` - When connection is returned to pool
 
 ## Retry Logic
 
@@ -376,21 +381,23 @@ users, err := queries.GetAllUsers(ctx)
 
 ```go
 db := pgxkit.NewDB()
-
-// Add tracing
-db.AddHook(pgxkit.BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-    span := trace.SpanFromContext(ctx)
-    span.SetAttributes(attribute.String("db.statement", sql))
-    return nil
-})
-
-// Add circuit breaker
-db.AddHook(pgxkit.BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-    return circuitBreaker.Execute(func() error {
-        // Operation will be executed by pgxkit
+err := db.Connect(ctx, dsn,
+    // Add tracing
+    pgxkit.WithBeforeOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        span := trace.SpanFromContext(ctx)
+        span.SetAttributes(attribute.String("db.statement", sql))
         return nil
-    })
-})
+    }),
+    // Add metrics
+    pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        status := "success"
+        if operationErr != nil {
+            status = "error"
+        }
+        queryCounter.WithLabelValues(status).Inc()
+        return nil
+    }),
+)
 ```
 
 ## Documentation
