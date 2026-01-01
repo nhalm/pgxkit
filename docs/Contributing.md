@@ -246,7 +246,7 @@ Use golden tests for query plan regression detection:
 ```go
 func TestComplexQuery_Golden(t *testing.T) {
     testDB := setupTestDB(t)
-    db := testDB.EnableGolden(t, "TestComplexQuery")
+    db := testDB.EnableGolden("TestComplexQuery")
     
     // Query plan will be captured and compared
     rows, err := db.Query(ctx, complexQuery)

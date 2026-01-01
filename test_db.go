@@ -11,6 +11,24 @@ import (
 	"testing"
 )
 
+func toFloat64(v interface{}) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case float32:
+		return float64(n)
+	case int:
+		return float64(n)
+	case int64:
+		return float64(n)
+	case json.Number:
+		f, _ := n.Float64()
+		return f
+	default:
+		return 0
+	}
+}
+
 // TestDB is a testing utility that wraps DB with testing-specific functionality.
 // It provides simple methods for test setup, cleanup, and golden test support.
 // TestDB automatically manages test database connections and provides utilities
@@ -122,11 +140,36 @@ func (g *goldenTestHook) captureExplainPlan(ctx context.Context, sql string, arg
 		return nil
 	}
 
-	if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(sql)), "EXPLAIN") {
+	upperSQL := strings.ToUpper(strings.TrimSpace(sql))
+
+	if strings.HasPrefix(upperSQL, "EXPLAIN") {
 		return nil
 	}
 
-	if !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(sql)), "SELECT") {
+	isSelect := strings.HasPrefix(upperSQL, "SELECT")
+	isDML := strings.HasPrefix(upperSQL, "INSERT") ||
+		strings.HasPrefix(upperSQL, "UPDATE") ||
+		strings.HasPrefix(upperSQL, "DELETE")
+
+	if strings.HasPrefix(upperSQL, "WITH") {
+		lastSelect := strings.LastIndex(upperSQL, " SELECT ")
+		lastInsert := strings.LastIndex(upperSQL, " INSERT ")
+		lastUpdate := strings.LastIndex(upperSQL, " UPDATE ")
+		lastDelete := strings.LastIndex(upperSQL, " DELETE ")
+
+		maxDML := lastInsert
+		if lastUpdate > maxDML {
+			maxDML = lastUpdate
+		}
+		if lastDelete > maxDML {
+			maxDML = lastDelete
+		}
+
+		isSelect = lastSelect > maxDML
+		isDML = maxDML > lastSelect
+	}
+
+	if !isSelect && !isDML {
 		return nil
 	}
 
@@ -141,16 +184,46 @@ func (g *goldenTestHook) captureExplainPlan(ctx context.Context, sql string, arg
 		return nil
 	}
 
-	rows, err := g.db.writePool.Query(ctx, explainSQL, args...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-
 	var explainResult string
-	if rows.Next() {
-		err = rows.Scan(&explainResult)
+
+	if isDML {
+		tx, err := g.db.writePool.Begin(ctx)
 		if err != nil {
+			return nil
+		}
+		defer func() {
+			_ = tx.Rollback(ctx)
+		}()
+
+		rows, err := tx.Query(ctx, explainSQL, args...)
+		if err != nil {
+			return nil
+		}
+		defer rows.Close()
+
+		if rows.Next() {
+			err = rows.Scan(&explainResult)
+			if err != nil {
+				return nil
+			}
+		}
+		if rows.Err() != nil {
+			return nil
+		}
+	} else {
+		rows, err := g.db.writePool.Query(ctx, explainSQL, args...)
+		if err != nil {
+			return nil
+		}
+		defer rows.Close()
+
+		if rows.Next() {
+			err = rows.Scan(&explainResult)
+			if err != nil {
+				return nil
+			}
+		}
+		if rows.Err() != nil {
 			return nil
 		}
 	}
@@ -163,13 +236,9 @@ func (g *goldenTestHook) captureExplainPlan(ctx context.Context, sql string, arg
 	var executionTime, planningTime float64
 	if len(explainData) > 0 {
 		if planData, ok := explainData[0]["Plan"].(map[string]interface{}); ok {
-			if execTime, ok := planData["Actual Total Time"].(float64); ok {
-				executionTime = execTime
-			}
+			executionTime = toFloat64(planData["Actual Total Time"])
 		}
-		if planTime, ok := explainData[0]["Planning Time"].(float64); ok {
-			planningTime = planTime
-		}
+		planningTime = toFloat64(explainData[0]["Planning Time"])
 	}
 
 	queryPlan := QueryPlan{
@@ -180,7 +249,7 @@ func (g *goldenTestHook) captureExplainPlan(ctx context.Context, sql string, arg
 		PlanningMS:  planningTime,
 	}
 
-	err = g.appendToGoldenFile(queryPlan)
+	err := g.appendToGoldenFile(queryPlan)
 	if err != nil {
 		return nil
 	}
@@ -190,6 +259,9 @@ func (g *goldenTestHook) captureExplainPlan(ctx context.Context, sql string, arg
 
 // appendToGoldenFile appends the query plan to the golden file
 func (g *goldenTestHook) appendToGoldenFile(queryPlan QueryPlan) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
 	goldenFile := fmt.Sprintf("testdata/golden/%s.json", g.testName)
 
 	dir := filepath.Dir(goldenFile)
@@ -199,7 +271,11 @@ func (g *goldenTestHook) appendToGoldenFile(queryPlan QueryPlan) error {
 
 	var existingPlans []QueryPlan
 	if data, err := os.ReadFile(goldenFile); err == nil {
-		json.Unmarshal(data, &existingPlans)
+		if len(data) > 0 {
+			if err := json.Unmarshal(data, &existingPlans); err != nil {
+				return fmt.Errorf("failed to parse existing golden file %s: %w", goldenFile, err)
+			}
+		}
 	}
 
 	existingPlans = append(existingPlans, queryPlan)

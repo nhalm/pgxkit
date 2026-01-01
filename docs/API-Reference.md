@@ -606,10 +606,10 @@ func TestUserQueries(t *testing.T) {
 ### EnableGolden
 
 ```go
-func (tdb *TestDB) EnableGolden(t *testing.T, testName string) *DB
+func (tdb *TestDB) EnableGolden(testName string) *DB
 ```
 
-Enables golden testing to capture and compare query execution plans for performance regression detection.
+Enables golden testing to capture and compare query execution plans for performance regression detection. Supports SELECT, INSERT, UPDATE, and DELETE queries. DML operations are executed within a transaction that is rolled back to avoid side effects.
 
 **Example:**
 ```go
@@ -622,11 +622,14 @@ func TestUserQueries(t *testing.T) {
     }
     defer testDB.Shutdown(ctx)
 
-    db := testDB.EnableGolden(t, "TestUserQueries")
+    db := testDB.EnableGolden("TestUserQueries")
 
-    // Queries will have their EXPLAIN plans captured
+    // SELECT queries have their EXPLAIN plans captured
     rows, err := db.Query(ctx, "SELECT * FROM users WHERE active = true")
     // ...
+
+    // DML queries are also captured (rolled back after EXPLAIN)
+    db.Exec(ctx, "UPDATE users SET last_login = NOW() WHERE id = $1", userID)
 }
 ```
 

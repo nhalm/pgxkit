@@ -256,12 +256,12 @@ func NewTestSuite(t *testing.T) *TestSuite {
 
 ### What are golden tests and when should I use them?
 
-Golden tests capture and compare query execution plans to detect performance regressions:
+Golden tests capture and compare query execution plans for SELECT, INSERT, UPDATE, and DELETE queries to detect performance regressions. DML operations are executed in rolled-back transactions to avoid side effects:
 
 ```go
 func TestComplexQuery_Golden(t *testing.T) {
     testDB := setupTestDB(t)
-    db := testDB.EnableGolden(t, "TestComplexQuery")
+    db := testDB.EnableGolden("TestComplexQuery")
     
     // Query plan will be captured automatically
     rows, err := db.Query(ctx, `
@@ -277,8 +277,9 @@ func TestComplexQuery_Golden(t *testing.T) {
 ```
 
 **Use golden tests for:**
-- Critical queries that must maintain performance
+- Critical SELECT queries that must maintain performance
 - Complex queries with multiple joins
+- INSERT/UPDATE/DELETE operations with complex WHERE clauses
 - Queries that use indexes heavily
 - Performance regression detection in CI/CD
 
