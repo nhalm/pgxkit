@@ -48,56 +48,25 @@ package main
 import (
     "context"
     "log"
-    "os"
-    "strconv"
     "time"
-    
-    "github.com/jackc/pgx/v5/pgxpool"
+
     "github.com/nhalm/pgxkit"
 )
 
 func createProductionDB() *pgxkit.DB {
-    config, err := pgxpool.ParseConfig(pgxkit.GetDSN())
+    db := pgxkit.NewDB()
+
+    err := db.Connect(context.Background(), pgxkit.GetDSN(),
+        pgxkit.WithMaxConns(30),
+        pgxkit.WithMinConns(5),
+        pgxkit.WithMaxConnLifetime(time.Hour),
+        pgxkit.WithMaxConnIdleTime(30*time.Minute),
+    )
     if err != nil {
-        log.Fatal("Failed to parse database config:", err)
+        log.Fatal("Failed to connect to database:", err)
     }
-    
-    // Production pool settings
-    config.MaxConns = getEnvInt("POSTGRES_MAX_CONNS", 30)
-    config.MinConns = getEnvInt("POSTGRES_MIN_CONNS", 5)
-    config.MaxConnLifetime = getEnvDuration("POSTGRES_MAX_CONN_LIFETIME", time.Hour)
-    config.MaxConnIdleTime = getEnvDuration("POSTGRES_MAX_CONN_IDLE_TIME", 30*time.Minute)
-    config.HealthCheckPeriod = getEnvDuration("POSTGRES_HEALTH_CHECK_PERIOD", time.Minute)
-    
-    pool, err := pgxpool.NewWithConfig(context.Background(), config)
-    if err != nil {
-        log.Fatal("Failed to create connection pool:", err)
-    }
-    
-    db := pgxkit.NewDB(pool)
-    
-    // Add production hooks
-    setupProductionHooks(db)
-    
+
     return db
-}
-
-func getEnvInt(key string, defaultValue int) int32 {
-    if val := os.Getenv(key); val != "" {
-        if i, err := strconv.Atoi(val); err == nil {
-            return int32(i)
-        }
-    }
-    return int32(defaultValue)
-}
-
-func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
-    if val := os.Getenv(key); val != "" {
-        if d, err := time.ParseDuration(val); err == nil {
-            return d
-        }
-    }
-    return defaultValue
 }
 ```
 
@@ -140,20 +109,21 @@ func createProductionReadWriteDB() *pgxkit.DB {
 ### Production Pool Settings
 
 ```go
-func optimizeForProduction(config *pgxpool.Config) {
-    // Calculate based on your infrastructure
-    cpuCores := runtime.NumCPU()
-    
-    // Conservative settings for production stability
-    config.MaxConns = int32(cpuCores * 4)        // 4 connections per core
-    config.MinConns = int32(cpuCores)            // 1 connection per core minimum
-    config.MaxConnLifetime = 2 * time.Hour       // Rotate connections every 2 hours
-    config.MaxConnIdleTime = 15 * time.Minute    // Close idle connections after 15 minutes
-    config.HealthCheckPeriod = 30 * time.Second  // Check health every 30 seconds
-    
-    // Connection timeouts
-    config.ConnConfig.ConnectTimeout = 10 * time.Second
-    config.ConnConfig.Config.DefaultQueryExecMode = pgx.QueryExecModeExec
+func createOptimizedDB(ctx context.Context) *pgxkit.DB {
+    cpuCores := int32(runtime.NumCPU())
+
+    db := pgxkit.NewDB()
+    err := db.Connect(ctx, pgxkit.GetDSN(),
+        pgxkit.WithMaxConns(cpuCores*4),
+        pgxkit.WithMinConns(cpuCores),
+        pgxkit.WithMaxConnLifetime(2*time.Hour),
+        pgxkit.WithMaxConnIdleTime(15*time.Minute),
+    )
+    if err != nil {
+        log.Fatal("Failed to connect:", err)
+    }
+
+    return db
 }
 ```
 
