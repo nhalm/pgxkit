@@ -537,14 +537,16 @@ func setupPerformanceMonitoring(db *pgxkit.DB, metrics *PerformanceMetrics) {
 
 ## Golden Testing for Performance
 
+Golden testing captures EXPLAIN (ANALYZE, BUFFERS) plans for SELECT, INSERT, UPDATE, and DELETE queries. DML operations are executed within a rolled-back transaction to avoid side effects.
+
 ### Automated Performance Regression Detection
 
 ```go
 func TestQueryPerformance(t *testing.T) {
     testDB := setupTestDB(t)
-    
+
     // Enable golden testing to capture EXPLAIN plans
-    db := testDB.EnableGolden(t, "TestQueryPerformance")
+    db := testDB.EnableGolden("TestQueryPerformance")
     
     // Create test data
     createTestData(t, testDB, 10000)

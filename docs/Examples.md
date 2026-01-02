@@ -278,15 +278,17 @@ func advancedHealthCheck(db *pgxkit.DB) error {
 
 ### Golden Tests
 
+Golden tests capture EXPLAIN plans for SELECT, INSERT, UPDATE, and DELETE queries. DML operations are safely executed in rolled-back transactions.
+
 ```go
 func TestUserQueries(t *testing.T) {
     // Setup test database with golden test support
     testDB := pgxkit.NewTestDB(t)
-    db := testDB.EnableGolden(t, "TestUserQueries")
-    
+    db := testDB.EnableGolden("TestUserQueries")
+
     // Create test data
     testDB.LoadFixtures(t, "users.sql")
-    
+
     // Execute query - EXPLAIN plan will be captured
     rows, err := db.Query(context.Background(), `
         SELECT u.id, u.name, COUNT(o.id) as order_count

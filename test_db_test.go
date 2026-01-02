@@ -170,6 +170,136 @@ func TestRequireDB(t *testing.T) {
 	})
 }
 
+func TestGoldenDML(t *testing.T) {
+	testDB := RequireDB(t)
+	if testDB == nil {
+		return
+	}
+
+	ctx := context.Background()
+
+	// Create a temporary table for DML testing
+	_, err := testDB.Exec(ctx, `
+		CREATE TEMP TABLE golden_test_users (
+			id SERIAL PRIMARY KEY,
+			name TEXT NOT NULL,
+			email TEXT
+		)
+	`)
+	if err != nil {
+		t.Fatalf("Failed to create temp table: %v", err)
+	}
+
+	t.Run("insert", func(t *testing.T) {
+		goldenDB := testDB.EnableGolden("TestGoldenDML_Insert")
+		defer CleanupGolden("TestGoldenDML_Insert")
+
+		var id int
+		err := goldenDB.QueryRow(ctx, `
+			INSERT INTO golden_test_users (name, email)
+			VALUES ($1, $2)
+			RETURNING id
+		`, "Test User", "test@example.com").Scan(&id)
+		if err != nil {
+			t.Fatalf("INSERT should not fail: %v", err)
+		}
+
+		if id == 0 {
+			t.Error("Expected non-zero id from INSERT RETURNING")
+		}
+
+		goldenDB.AssertGolden(t, "TestGoldenDML_Insert")
+	})
+
+	t.Run("update", func(t *testing.T) {
+		goldenDB := testDB.EnableGolden("TestGoldenDML_Update")
+		defer CleanupGolden("TestGoldenDML_Update")
+
+		_, err := goldenDB.Exec(ctx, `
+			UPDATE golden_test_users
+			SET email = $1
+			WHERE name = $2
+		`, "updated@example.com", "Test User")
+		if err != nil {
+			t.Fatalf("UPDATE should not fail: %v", err)
+		}
+
+		goldenDB.AssertGolden(t, "TestGoldenDML_Update")
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		goldenDB := testDB.EnableGolden("TestGoldenDML_Delete")
+		defer CleanupGolden("TestGoldenDML_Delete")
+
+		_, err := goldenDB.Exec(ctx, `
+			DELETE FROM golden_test_users
+			WHERE name = $1
+		`, "Test User")
+		if err != nil {
+			t.Fatalf("DELETE should not fail: %v", err)
+		}
+
+		goldenDB.AssertGolden(t, "TestGoldenDML_Delete")
+	})
+}
+
+func TestGoldenCTE(t *testing.T) {
+	testDB := RequireDB(t)
+	if testDB == nil {
+		return
+	}
+
+	ctx := context.Background()
+
+	// Create temp table
+	_, err := testDB.Exec(ctx, `
+		CREATE TEMP TABLE golden_cte_test (
+			id SERIAL PRIMARY KEY,
+			value INT
+		)
+	`)
+	if err != nil {
+		t.Fatalf("Failed to create temp table: %v", err)
+	}
+
+	t.Run("cte_select", func(t *testing.T) {
+		goldenDB := testDB.EnableGolden("TestGoldenCTE_Select")
+		defer CleanupGolden("TestGoldenCTE_Select")
+
+		rows, err := goldenDB.Query(ctx, `
+			WITH numbered AS (
+				SELECT id, value, ROW_NUMBER() OVER () as rn
+				FROM golden_cte_test
+			)
+			SELECT * FROM numbered WHERE rn <= 10
+		`)
+		if err != nil {
+			t.Fatalf("CTE SELECT should not fail: %v", err)
+		}
+		rows.Close()
+
+		goldenDB.AssertGolden(t, "TestGoldenCTE_Select")
+	})
+
+	t.Run("cte_insert", func(t *testing.T) {
+		goldenDB := testDB.EnableGolden("TestGoldenCTE_Insert")
+		defer CleanupGolden("TestGoldenCTE_Insert")
+
+		_, err := goldenDB.Exec(ctx, `
+			WITH vals AS (
+				SELECT generate_series(1, 5) as v
+			)
+			INSERT INTO golden_cte_test (value)
+			SELECT v FROM vals
+		`)
+		if err != nil {
+			t.Fatalf("CTE INSERT should not fail: %v", err)
+		}
+
+		goldenDB.AssertGolden(t, "TestGoldenCTE_Insert")
+	})
+}
+
 // Integration test that requires actual database connection
 func TestTestDBIntegration(t *testing.T) {
 	// Skip if no test database available

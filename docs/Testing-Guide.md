@@ -378,18 +378,20 @@ func TestUserService_CreateUserWithProfile(t *testing.T) {
 
 ## Golden Testing
 
+Golden testing captures EXPLAIN (ANALYZE, BUFFERS) plans for SELECT, INSERT, UPDATE, and DELETE queries to detect query plan regressions. DML operations (INSERT/UPDATE/DELETE) are executed within a transaction that is rolled back, so no data is modified.
+
 ### Query Plan Testing
 
 ```go
 func TestUserQueries_Golden(t *testing.T) {
     testDB := setupTestDB(t)
-    
+
     // Enable golden testing
-    db := testDB.EnableGolden(t, "TestUserQueries_Golden")
-    
+    db := testDB.EnableGolden("TestUserQueries_Golden")
+
     // Load test data
     testDB.LoadFixtures(t, "users.sql", "orders.sql")
-    
+
     t.Run("complex_user_query", func(t *testing.T) {
         // This query's EXPLAIN plan will be captured and compared
         rows, err := db.Query(context.Background(), `
@@ -453,6 +455,27 @@ func TestUserQueries_Golden(t *testing.T) {
         // The golden test will track performance of this search
         assert.True(t, len(users) >= 0)
     })
+
+    t.Run("insert_with_returning", func(t *testing.T) {
+        // DML queries are also captured - executed in a rolled-back transaction
+        var userID int
+        err := db.QueryRow(context.Background(), `
+            INSERT INTO users (name, email, active)
+            VALUES ($1, $2, true)
+            RETURNING id
+        `, "Test User", "test@example.com").Scan(&userID)
+        require.NoError(t, err)
+    })
+
+    t.Run("update_query", func(t *testing.T) {
+        // UPDATE query plans are captured
+        _, err := db.Exec(context.Background(), `
+            UPDATE users
+            SET last_login = NOW()
+            WHERE active = true AND last_login < NOW() - INTERVAL '30 days'
+        `)
+        require.NoError(t, err)
+    })
 }
 ```
 
@@ -461,7 +484,7 @@ func TestUserQueries_Golden(t *testing.T) {
 ```go
 func TestPerformanceRegression(t *testing.T) {
     testDB := setupTestDB(t)
-    db := testDB.EnableGolden(t, "TestPerformanceRegression")
+    db := testDB.EnableGolden("TestPerformanceRegression")
     
     // Create large dataset for performance testing
     testDB.CreateLargeDataset(t, 10000) // 10k users
