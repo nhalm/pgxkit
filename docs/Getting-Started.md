@@ -160,9 +160,12 @@ rows, err := db.ReadQuery(ctx, "SELECT * FROM users")
 ```go
 // Retry database operations
 config := pgxkit.DefaultRetryConfig()
-result, err := db.ExecWithRetry(ctx, config,
-    "INSERT INTO users (name, email) VALUES ($1, $2)",
-    "Jane Doe", "jane@example.com")
+err := pgxkit.RetryOperation(ctx, config, func(ctx context.Context) error {
+    _, err := db.Exec(ctx,
+        "INSERT INTO users (name, email) VALUES ($1, $2)",
+        "Jane Doe", "jane@example.com")
+    return err
+})
 ```
 
 ## What's Next?

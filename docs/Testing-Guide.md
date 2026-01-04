@@ -409,9 +409,9 @@ func TestUserQueries_Golden(t *testing.T) {
         ON CONFLICT (id) DO NOTHING;
 
         INSERT INTO orders (id, user_id, total, created_at) VALUES
-        (1, 1, 99.99, '2023-01-15 10:00:00'),
-        (2, 1, 149.99, '2023-01-16 11:00:00'),
-        (3, 2, 75.50, '2023-01-17 12:00:00')
+        (1, 1, 99.99, NOW() - INTERVAL '3 days'),
+        (2, 1, 149.99, NOW() - INTERVAL '2 days'),
+        (3, 2, 75.50, NOW() - INTERVAL '1 day')
         ON CONFLICT (id) DO NOTHING;
     `)
     require.NoError(t, err)
@@ -690,9 +690,9 @@ Store SQL fixtures in your project and load them manually:
 ```sql
 -- fixtures/users.sql
 INSERT INTO users (id, name, email, active, created_at) VALUES
-(1, 'John Doe', 'john@example.com', true, '2023-01-01 10:00:00'),
-(2, 'Jane Smith', 'jane@example.com', true, '2023-01-02 11:00:00'),
-(3, 'Bob Johnson', 'bob@example.com', false, '2023-01-03 12:00:00')
+(1, 'John Doe', 'john@example.com', true, NOW() - INTERVAL '10 days'),
+(2, 'Jane Smith', 'jane@example.com', true, NOW() - INTERVAL '9 days'),
+(3, 'Bob Johnson', 'bob@example.com', false, NOW() - INTERVAL '8 days')
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name,
     email = EXCLUDED.email,
@@ -700,9 +700,9 @@ ON CONFLICT (id) DO UPDATE SET
 
 -- fixtures/orders.sql
 INSERT INTO orders (id, user_id, total, created_at) VALUES
-(1, 1, 99.99, '2023-01-15 10:00:00'),
-(2, 1, 149.99, '2023-01-16 11:00:00'),
-(3, 2, 75.50, '2023-01-17 12:00:00')
+(1, 1, 99.99, NOW() - INTERVAL '3 days'),
+(2, 1, 149.99, NOW() - INTERVAL '2 days'),
+(3, 2, 75.50, NOW() - INTERVAL '1 day')
 ON CONFLICT (id) DO UPDATE SET
     user_id = EXCLUDED.user_id,
     total = EXCLUDED.total;

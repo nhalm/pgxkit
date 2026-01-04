@@ -34,7 +34,6 @@ The main database abstraction that provides read/write pool management, hooks, a
 - Read/write pool abstraction
 - Extensible hook system
 - Graceful shutdown with operation tracking
-- Built-in retry logic
 - Connection pool statistics
 
 ### DBConfig
@@ -244,22 +243,6 @@ if err != nil {
 log.Printf("Inserted %d rows", tag.RowsAffected())
 ```
 
-### ExecWithRetry
-
-```go
-func (db *DB) ExecWithRetry(ctx context.Context, config *RetryConfig, sql string, args ...interface{}) (pgconn.CommandTag, error)
-```
-
-Executes a command with automatic retry logic for transient failures.
-
-**Example:**
-```go
-config := pgxkit.DefaultRetryConfig()
-tag, err := db.ExecWithRetry(ctx, config,
-    "INSERT INTO users (name, email) VALUES ($1, $2)",
-    "John Doe", "john@example.com")
-```
-
 ## Transaction Management
 
 ### BeginTx
@@ -406,6 +389,50 @@ config := pgxkit.DefaultRetryConfig()
 // Customize if needed:
 config.MaxRetries = 5
 config.MaxDelay = 5 * time.Second
+```
+
+### RetryOperation
+
+```go
+func RetryOperation(ctx context.Context, config *RetryConfig, fn func(ctx context.Context) error) error
+```
+
+Retries any operation that returns an error, using the provided retry configuration with exponential backoff. Only retryable errors (connection issues, deadlocks, serialization failures) trigger retries.
+
+**Example:**
+```go
+config := pgxkit.DefaultRetryConfig()
+
+// Retry an exec operation
+err := pgxkit.RetryOperation(ctx, config, func(ctx context.Context) error {
+    _, err := db.Exec(ctx, "INSERT INTO users (name, email) VALUES ($1, $2)",
+        "John Doe", "john@example.com")
+    return err
+})
+
+// Retry a query operation
+err = pgxkit.RetryOperation(ctx, config, func(ctx context.Context) error {
+    rows, err := db.Query(ctx, "SELECT * FROM users WHERE active = true")
+    if err != nil {
+        return err
+    }
+    defer rows.Close()
+    // Process rows...
+    return nil
+})
+
+// Retry a transaction
+err = pgxkit.RetryOperation(ctx, config, func(ctx context.Context) error {
+    tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+    if err != nil {
+        return err
+    }
+    defer tx.Rollback(ctx)
+
+    // Perform transaction operations...
+
+    return tx.Commit(ctx)
+})
 ```
 
 ### WithTimeout

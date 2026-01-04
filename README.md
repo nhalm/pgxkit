@@ -43,36 +43,36 @@ package main
 import (
     "context"
     "log"
-    
+
     "github.com/nhalm/pgxkit"
 )
 
 func main() {
     ctx := context.Background()
-    
+
     // Create and connect to database
     db := pgxkit.NewDB()
-    
+
     // Connect using environment variables or explicit DSN
     err := db.Connect(ctx, "") // Uses POSTGRES_* env vars
     if err != nil {
         log.Fatal(err)
     }
     defer db.Shutdown(ctx)
-    
+
     // Execute queries (uses write pool by default - safe)
     _, err = db.Exec(ctx, "INSERT INTO users (name) VALUES ($1)", "John")
     if err != nil {
         log.Fatal(err)
     }
-    
+
     // Optimize reads with explicit read pool usage
     rows, err := db.ReadQuery(ctx, "SELECT id, name FROM users")
     if err != nil {
         log.Fatal(err)
     }
     defer rows.Close()
-    
+
     // Process results...
 }
 ```
@@ -168,24 +168,27 @@ err := db.Connect(ctx, dsn,
 
 ## Retry Logic
 
-### Built-in Retry Methods
+### RetryOperation Function
 
 ```go
 config := pgxkit.DefaultRetryConfig() // 3 retries, exponential backoff
 
-// Retry database operations
-result, err := db.ExecWithRetry(ctx, config, "INSERT INTO users ...")
-rows, err := db.QueryWithRetry(ctx, config, "SELECT * FROM users")
-rows, err := db.ReadQueryWithRetry(ctx, config, "SELECT * FROM users") // Uses read pool
-tx, err := db.BeginTxWithRetry(ctx, config, pgx.TxOptions{})
-```
-
-### Generic Retry Functions
-
-```go
-// Retry any operation
+// Retry any database operation
 err := pgxkit.RetryOperation(ctx, config, func(ctx context.Context) error {
-    return someComplexDatabaseOperation(ctx)
+    _, err := db.Exec(ctx, "INSERT INTO users (name, email) VALUES ($1, $2)",
+        "John Doe", "john@example.com")
+    return err
+})
+
+// Retry a query operation
+err = pgxkit.RetryOperation(ctx, config, func(ctx context.Context) error {
+    rows, err := db.Query(ctx, "SELECT * FROM users")
+    if err != nil {
+        return err
+    }
+    defer rows.Close()
+    // Process rows...
+    return nil
 })
 
 // Retry with timeout
@@ -260,12 +263,12 @@ func TestUserQueries(t *testing.T) {
     defer testDB.Clean()
 
     // Enable golden test hooks - captures EXPLAIN plans automatically
-    db := testDB.EnableGolden(t, "TestUserQueries")
+    db := testDB.EnableGolden("TestUserQueries")
 
     // These queries will have their EXPLAIN plans captured
     rows, err := db.Query(ctx, "SELECT * FROM users WHERE active = true")
     // ... more queries
-    
+
     // Plans are saved to testdata/golden/TestUserQueries_query_1.json, etc.
     // Future runs compare plans to detect performance regressions
 }
@@ -406,7 +409,7 @@ err := db.Connect(ctx, dsn,
 
 ### Quick Links
 - **[Getting Started](../../wiki/Getting-Started)** - Setup and basic usage
-- **[API Reference](../../wiki/API-Reference)** - Complete API documentation  
+- **[API Reference](../../wiki/API-Reference)** - Complete API documentation
 - **[Examples](../../wiki/Examples)** - Practical code examples and use cases
 - **[Performance Guide](../../wiki/Performance-Guide)** - Optimization strategies
 - **[Production Guide](../../wiki/Production-Guide)** - Deployment best practices

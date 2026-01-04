@@ -202,14 +202,75 @@ func executeWithRetry(db *pgxkit.DB) {
     config.BaseDelay = 100 * time.Millisecond
 
     // Retry failed operations
-    result, err := db.ExecWithRetry(ctx, config,
-        "INSERT INTO users (name, email) VALUES ($1, $2)",
-        "Jane Doe", "jane@example.com")
+    err := pgxkit.RetryOperation(ctx, config, func(ctx context.Context) error {
+        _, err := db.Exec(ctx,
+            "INSERT INTO users (name, email) VALUES ($1, $2)",
+            "Jane Doe", "jane@example.com")
+        return err
+    })
     if err != nil {
         log.Fatal("Failed after retries:", err)
     }
 
-    log.Printf("Inserted user, affected rows: %d", result.RowsAffected())
+    log.Println("User inserted successfully")
+}
+```
+
+### Retry Queries
+
+```go
+func queryWithRetry(db *pgxkit.DB) ([]User, error) {
+    config := pgxkit.DefaultRetryConfig()
+
+    var users []User
+    err := pgxkit.RetryOperation(ctx, config, func(ctx context.Context) error {
+        rows, err := db.Query(ctx, "SELECT id, name, email FROM users WHERE active = true")
+        if err != nil {
+            return err
+        }
+        defer rows.Close()
+
+        users = nil // Reset on retry
+        for rows.Next() {
+            var user User
+            if err := rows.Scan(&user.ID, &user.Name, &user.Email); err != nil {
+                return err
+            }
+            users = append(users, user)
+        }
+        return rows.Err()
+    })
+
+    return users, err
+}
+```
+
+### Retry Transactions
+
+```go
+func executeTransactionWithRetry(db *pgxkit.DB) error {
+    config := pgxkit.DefaultRetryConfig()
+
+    return pgxkit.RetryOperation(ctx, config, func(ctx context.Context) error {
+        tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+        if err != nil {
+            return err
+        }
+        defer tx.Rollback(ctx)
+
+        // Perform transaction operations
+        _, err = tx.Exec(ctx, "UPDATE accounts SET balance = balance - $1 WHERE id = $2", amount, fromID)
+        if err != nil {
+            return err
+        }
+
+        _, err = tx.Exec(ctx, "UPDATE accounts SET balance = balance + $1 WHERE id = $2", amount, toID)
+        if err != nil {
+            return err
+        }
+
+        return tx.Commit(ctx)
+    })
 }
 ```
 

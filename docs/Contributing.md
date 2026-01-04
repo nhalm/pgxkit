@@ -273,8 +273,6 @@ func TestComplexQuery_Golden(t *testing.T) {
 
 4. **Add/update tests** for new functionality
 
-5. **Update CHANGELOG** if applicable
-
 ### PR Guidelines
 
 #### Title and Description
@@ -293,7 +291,6 @@ func TestComplexQuery_Golden(t *testing.T) {
 - [ ] Linting passes
 - [ ] Documentation updated
 - [ ] Tests added/updated
-- [ ] CHANGELOG updated (if applicable)
 - [ ] No breaking changes (or clearly documented)
 
 ### Example PR Description
@@ -302,15 +299,9 @@ func TestComplexQuery_Golden(t *testing.T) {
 ## Summary
 Add retry logic with exponential backoff for connection failures.
 
-## Changes
-- Add `RetryConfig` type for configuration
-- Implement `ExecWithRetry` method
-- Add tests for retry scenarios
-- Update documentation with retry examples
-
-## Testing
-- Added unit tests for retry logic
-- Added integration tests with connection failures
+## Test plan
+- Unit tests for retry logic
+- Integration tests with connection failures
 - Verified exponential backoff behavior
 
 Fixes #123
@@ -418,11 +409,9 @@ We follow [Semantic Versioning](https://semver.org/):
 ### Release Checklist
 
 1. Update version in relevant files
-2. Update CHANGELOG.md
-3. Run all tests
-4. Create release tag
-5. Update documentation
-6. Announce release
+2. Run all tests
+3. Create release tag
+4. Update documentation
 
 ## Getting Help
 
