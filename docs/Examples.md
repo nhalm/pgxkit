@@ -136,45 +136,58 @@ func isReadQuery(sql string) bool {
 ### Logging Hook
 
 ```go
-func setupLogging(db *pgxkit.DB) {
-    // Log all queries
-    db.AddHook(pgxkit.BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-        start := time.Now()
-        ctx = context.WithValue(ctx, "query_start", start)
-        log.Printf("Executing: %s", sql)
-        return nil
-    })
+func setupLogging() *pgxkit.DB {
+    ctx := context.Background()
+    db := pgxkit.NewDB()
 
-    db.AddHook(pgxkit.AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-        if start, ok := ctx.Value("query_start").(time.Time); ok {
-            duration := time.Since(start)
+    err := db.Connect(ctx, "",
+        pgxkit.WithBeforeOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+            log.Printf("Executing: %s", sql)
+            return nil
+        }),
+        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
             if operationErr != nil {
-                log.Printf("Query failed in %v: %v", duration, operationErr)
+                log.Printf("Query failed: %v", operationErr)
             } else {
-                log.Printf("Query completed in %v", duration)
+                log.Printf("Query completed successfully")
             }
-        }
-        return nil
-    })
+            return nil
+        }),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    return db
 }
 ```
 
 ### Metrics Hook
 
 ```go
-func setupMetrics(db *pgxkit.DB) {
-    db.AddHook(pgxkit.AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-        operation := extractOperation(sql) // Parse SELECT, INSERT, etc.
+func setupMetrics() *pgxkit.DB {
+    ctx := context.Background()
+    db := pgxkit.NewDB()
 
-        // Record query count
-        if operationErr != nil {
-            metrics.QueryErrors.WithLabelValues(operation).Inc()
-        } else {
-            metrics.QuerySuccess.WithLabelValues(operation).Inc()
-        }
+    err := db.Connect(ctx, "",
+        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+            operation := extractOperation(sql) // Parse SELECT, INSERT, etc.
 
-        return nil
-    })
+            // Record query count
+            if operationErr != nil {
+                metrics.QueryErrors.WithLabelValues(operation).Inc()
+            } else {
+                metrics.QuerySuccess.WithLabelValues(operation).Inc()
+            }
+
+            return nil
+        }),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    return db
 }
 ```
 
@@ -205,17 +218,10 @@ func executeWithRetry(db *pgxkit.DB) {
 ```go
 func customRetryConfig() *pgxkit.RetryConfig {
     return &pgxkit.RetryConfig{
-        MaxRetries:    5,
-        BaseDelay:     50 * time.Millisecond,
-        MaxDelay:      2 * time.Second,
-        BackoffFactor: 2.0,
-
-        // Custom retry condition
-        ShouldRetry: func(err error) bool {
-            // Only retry on connection errors
-            return errors.Is(err, pgx.ErrNoRows) == false &&
-                   strings.Contains(err.Error(), "connection")
-        },
+        MaxRetries: 5,
+        BaseDelay:  50 * time.Millisecond,
+        MaxDelay:   2 * time.Second,
+        Multiplier: 2.0,
     }
 }
 ```
@@ -295,8 +301,17 @@ func TestUserQueries(t *testing.T) {
     // Enable golden test support
     db := testDB.EnableGolden("TestUserQueries")
 
-    // Create test data
-    testDB.LoadFixtures(t, "users.sql")
+    // Load test data using your own fixture loading implementation
+    // pgxkit does not provide a built-in fixture loader - use manual SQL or your preferred tool
+    _, err = testDB.Exec(ctx, `
+        INSERT INTO users (id, name, email) VALUES
+        (1, 'John Doe', 'john@example.com'),
+        (2, 'Jane Smith', 'jane@example.com')
+        ON CONFLICT (id) DO NOTHING
+    `)
+    if err != nil {
+        t.Fatal(err)
+    }
 
     // Execute query - EXPLAIN plan will be captured
     rows, err := db.Query(ctx, `
@@ -378,31 +393,6 @@ func (r *UserRepository) GetUser(ctx context.Context, id UserID) (*User, error) 
 }
 ```
 
-### JSON and Array Helpers
-
-```go
-// Working with JSON columns
-type UserPreferences struct {
-    Theme    string `json:"theme"`
-    Language string `json:"language"`
-}
-
-func saveUserPreferences(db *pgxkit.DB, userID int, prefs UserPreferences) error {
-    _, err := db.Exec(ctx,
-        "UPDATE users SET preferences = $1 WHERE id = $2",
-        pgxkit.JSON(prefs), userID)
-    return err
-}
-
-func getUserPreferences(db *pgxkit.DB, userID int) (*UserPreferences, error) {
-    var prefs UserPreferences
-    err := db.QueryRow(ctx,
-        "SELECT preferences FROM users WHERE id = $1",
-        userID).Scan(pgxkit.ScanJSON(&prefs))
-    return &prefs, err
-}
-```
-
 ## Metrics and Observability
 
 ### Prometheus Integration
@@ -420,25 +410,30 @@ var (
     )
 )
 
-func setupPrometheusMetrics(db *pgxkit.DB) {
-    db.AddHook(pgxkit.BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-        start := time.Now()
-        return context.WithValue(ctx, "metrics_start", start)
-    })
+func setupPrometheusMetrics() *pgxkit.DB {
+    ctx := context.Background()
+    db := pgxkit.NewDB()
 
-    db.AddHook(pgxkit.AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-        if start, ok := ctx.Value("metrics_start").(time.Time); ok {
-            duration := time.Since(start)
-            operation := extractOperation(sql)
-            status := "success"
-            if operationErr != nil {
-                status = "error"
+    err := db.Connect(ctx, "",
+        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+            if start, ok := ctx.Value("metrics_start").(time.Time); ok {
+                duration := time.Since(start)
+                operation := extractOperation(sql)
+                status := "success"
+                if operationErr != nil {
+                    status = "error"
+                }
+
+                queryDuration.WithLabelValues(operation, status).Observe(duration.Seconds())
             }
+            return nil
+        }),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
 
-            queryDuration.WithLabelValues(operation, status).Observe(duration.Seconds())
-        }
-        return nil
-    })
+    return db
 }
 ```
 
@@ -447,23 +442,32 @@ func setupPrometheusMetrics(db *pgxkit.DB) {
 ```go
 import "log/slog"
 
-func setupStructuredLogging(db *pgxkit.DB) {
+func setupStructuredLogging() *pgxkit.DB {
+    ctx := context.Background()
     logger := slog.Default()
+    db := pgxkit.NewDB()
 
-    db.AddHook(pgxkit.AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-        if operationErr != nil {
-            logger.ErrorContext(ctx, "database query failed",
-                slog.String("sql", sql),
-                slog.String("error", operationErr.Error()),
-            )
-        } else {
-            logger.InfoContext(ctx, "database query completed",
-                slog.String("sql", sql),
-                slog.Int("args_count", len(args)),
-            )
-        }
-        return nil
-    })
+    err := db.Connect(ctx, "",
+        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+            if operationErr != nil {
+                logger.ErrorContext(ctx, "database query failed",
+                    slog.String("sql", sql),
+                    slog.String("error", operationErr.Error()),
+                )
+            } else {
+                logger.InfoContext(ctx, "database query completed",
+                    slog.String("sql", sql),
+                    slog.Int("args_count", len(args)),
+                )
+            }
+            return nil
+        }),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    return db
 }
 ```
 
@@ -597,4 +601,3 @@ func main() {
 
 *This comprehensive examples document shows how to use all of pgxkit's features in real-world scenarios. The tool-agnostic design makes it easy to integrate with any PostgreSQL development approach while providing production-ready features out of the box.*
 
-*Last updated: December 2024*

@@ -285,30 +285,6 @@ defer tx.Rollback(ctx)
 err = tx.Commit(ctx)
 ```
 
-### WithTransaction
-
-```go
-func (db *DB) WithTransaction(ctx context.Context, txOptions pgx.TxOptions, fn func(pgx.Tx) error) error
-```
-
-Executes a function within a transaction, automatically handling commit/rollback.
-
-**Example:**
-```go
-err := db.WithTransaction(ctx, pgx.TxOptions{}, func(tx pgx.Tx) error {
-    // Insert user
-    _, err := tx.Exec(ctx, "INSERT INTO users (name) VALUES ($1)", "John")
-    if err != nil {
-        return err
-    }
-
-    // Insert profile
-    _, err = tx.Exec(ctx, "INSERT INTO profiles (user_id, bio) VALUES ($1, $2)",
-        userID, "Software Developer")
-    return err
-})
-```
-
 ## Hook System
 
 Hooks are configured via `ConnectOption` functions passed to `Connect()` or `ConnectReadWrite()`.
@@ -527,34 +503,6 @@ pgxID := pgxkit.ToPgxUUIDFromPtr(nullableID) // Results in NULL
 goID := pgxkit.FromPgxUUIDToPtr(pgxID)       // Returns nil for NULL
 ```
 
-### JSON Helpers
-
-```go
-func JSON[T any](data T) interface{}
-func ScanJSON[T any](dest *T) interface{}
-```
-
-Generic helpers for JSON column handling.
-
-**Example:**
-```go
-type UserSettings struct {
-    Theme    string `json:"theme"`
-    Language string `json:"language"`
-}
-
-settings := UserSettings{Theme: "dark", Language: "en"}
-
-// Insert JSON
-_, err := db.Exec(ctx, "UPDATE users SET settings = $1 WHERE id = $2",
-    pgxkit.JSON(settings), userID)
-
-// Query JSON
-var retrievedSettings UserSettings
-err := db.QueryRow(ctx, "SELECT settings FROM users WHERE id = $1", userID).
-    Scan(pgxkit.ScanJSON(&retrievedSettings))
-```
-
 ## Health Checks
 
 ### Stats
@@ -699,5 +647,3 @@ All `DB` methods are thread-safe and can be called concurrently from multiple go
 **[<- Back to Home](Home)**
 
 *This API reference covers all public types, functions, and methods in pgxkit. For practical usage examples, see the [Examples](Examples) page.*
-
-*Last updated: December 2024*

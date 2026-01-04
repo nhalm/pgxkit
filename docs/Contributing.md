@@ -460,6 +460,4 @@ Thank you for contributing to pgxkit! Your efforts help make database developmen
 
 **[← Back to Home](Home)**
 
-*This contributing guide helps ensure high-quality contributions to pgxkit. Thank you for helping improve the project!*
-
-*Last updated: December 2024* 
+*This contributing guide helps ensure high-quality contributions to pgxkit. Thank you for helping improve the project!* 

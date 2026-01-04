@@ -77,6 +77,4 @@ func main() {
 
 This wiki is actively maintained and synchronized with the repository documentation. Check the [repository releases](https://github.com/nhalm/pgxkit/releases) for the latest updates.
 
----
-
-*Last updated: December 2024* 
+--- 

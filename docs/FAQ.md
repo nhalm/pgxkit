@@ -82,7 +82,7 @@ maxConns := runtime.NumCPU() * 4  // 2-4 connections per core
 
 **Configuration example:**
 ```go
-dsn := fmt.Sprintf("%s?pool_max_conns=%d&pool_min_conns=%d", 
+dsn := fmt.Sprintf("%s?pool_max_conns=%d&pool_min_conns=%d",
     pgxkit.GetDSN(), maxConns, maxConns/4)
 ```
 
@@ -168,23 +168,26 @@ rows, err := db.ReadQuery(ctx, "SELECT * FROM users ORDER BY created_at DESC LIM
 
 ### How do I monitor performance?
 
-Use hooks to add metrics collection:
+Configure hooks when connecting to add metrics collection:
 
 ```go
-db.AddHook(pgxkit.AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-    duration := time.Since(start) // start from context
-    
-    // Prometheus metrics
-    queryDuration.WithLabelValues(operation, status).Observe(duration.Seconds())
-    queryTotal.WithLabelValues(operation, status).Inc()
-    
-    // Log slow queries
-    if duration > 100*time.Millisecond {
-        log.Printf("Slow query: %s (took %v)", sql, duration)
-    }
-    
-    return nil
-})
+db := pgxkit.NewDB()
+err := db.Connect(ctx, "",
+    pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        duration := time.Since(start) // start from context
+
+        // Prometheus metrics
+        queryDuration.WithLabelValues(operation, status).Observe(duration.Seconds())
+        queryTotal.WithLabelValues(operation, status).Inc()
+
+        // Log slow queries
+        if duration > 100*time.Millisecond {
+            log.Printf("Slow query: %s (took %v)", sql, duration)
+        }
+
+        return nil
+    }),
+)
 ```
 
 Monitor connection pool utilization:
@@ -231,10 +234,16 @@ func TestUserRepository(t *testing.T) {
     // Setup test database
     suite := NewTestSuite(t)
     repo := NewUserRepository(suite.DB)
-    
-    // Load test data
-    suite.LoadFixtures(t, "users.sql")
-    
+
+    // Load test data using manual SQL (pgxkit does not provide built-in fixture loading)
+    _, err := suite.DB.Exec(suite.ctx, `
+        INSERT INTO users (id, name, email, active) VALUES
+        (1, 'John Doe', 'john@example.com', true),
+        (2, 'Jane Smith', 'jane@example.com', true)
+        ON CONFLICT (id) DO NOTHING
+    `)
+    require.NoError(t, err)
+
     // Run your tests
     users, err := repo.GetActiveUsers(suite.ctx)
     require.NoError(t, err)
@@ -262,7 +271,7 @@ Golden tests capture and compare query execution plans for SELECT, INSERT, UPDAT
 func TestComplexQuery_Golden(t *testing.T) {
     testDB := setupTestDB(t)
     db := testDB.EnableGolden("TestComplexQuery")
-    
+
     // Query plan will be captured automatically
     rows, err := db.Query(ctx, `
         SELECT u.id, u.name, COUNT(o.id) as order_count
@@ -291,20 +300,20 @@ Test various error scenarios to ensure robust error handling:
 func TestRepository_ErrorHandling(t *testing.T) {
     suite := NewTestSuite(t)
     repo := NewUserRepository(suite.DB)
-    
+
     t.Run("duplicate_email", func(t *testing.T) {
         // Create user with duplicate email
         user1 := &User{Email: "test@example.com"}
         user2 := &User{Email: "test@example.com"}
-        
+
         err := repo.CreateUser(suite.ctx, user1)
         require.NoError(t, err)
-        
+
         err = repo.CreateUser(suite.ctx, user2)
         assert.Error(t, err)
         assert.Contains(t, err.Error(), "duplicate")
     })
-    
+
     t.Run("not_found", func(t *testing.T) {
         _, err := repo.GetUser(suite.ctx, 999)
         assert.Error(t, err)
@@ -326,26 +335,26 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
-    
+
     // Setup graceful shutdown
     c := make(chan os.Signal, 1)
     signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-    
+
     go func() {
         <-c
         log.Println("Shutting down...")
-        
+
         // Give operations time to complete
         ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
         defer cancel()
-        
+
         if err := db.Shutdown(ctx); err != nil {
             log.Printf("Shutdown error: %v", err)
         }
-        
+
         os.Exit(0)
     }()
-    
+
     // Your application logic here
 }
 ```
@@ -365,7 +374,7 @@ func runMigrations() error {
     if err != nil {
         return err
     }
-    
+
     return m.Up()
 }
 ```
@@ -377,7 +386,7 @@ func applyMigrations(db *pgxkit.DB) error {
         "CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT)",
         "ALTER TABLE users ADD COLUMN email TEXT",
     }
-    
+
     for _, migration := range migrations {
         _, err := db.Exec(ctx, migration)
         if err != nil {
@@ -397,7 +406,7 @@ func healthCheckHandler(db *pgxkit.DB) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
         defer cancel()
-        
+
         if err := db.HealthCheck(ctx); err != nil {
             w.WriteHeader(http.StatusServiceUnavailable)
             json.NewEncoder(w).Encode(map[string]string{
@@ -406,7 +415,7 @@ func healthCheckHandler(db *pgxkit.DB) http.HandlerFunc {
             })
             return
         }
-        
+
         w.WriteHeader(http.StatusOK)
         json.NewEncoder(w).Encode(map[string]string{
             "status": "healthy",
@@ -461,12 +470,15 @@ defer cancel()
 
 1. **Enable query logging:**
 ```go
-db.AddHook(pgxkit.AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-    if duration := getDuration(ctx); duration > 100*time.Millisecond {
-        log.Printf("Slow query: %s (took %v)", sql, duration)
-    }
-    return nil
-})
+db := pgxkit.NewDB()
+err := db.Connect(ctx, "",
+    pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        if duration := getDuration(ctx); duration > 100*time.Millisecond {
+            log.Printf("Slow query: %s (took %v)", sql, duration)
+        }
+        return nil
+    }),
+)
 ```
 
 2. **Use EXPLAIN ANALYZE:**
@@ -479,7 +491,7 @@ func analyzeQuery(db *pgxkit.DB, sql string, args ...interface{}) {
         return
     }
     defer rows.Close()
-    
+
     for rows.Next() {
         var line string
         rows.Scan(&line)
@@ -553,13 +565,13 @@ func processLargeDataset(db *pgxkit.DB, processor func(*Record) error) error {
         return err
     }
     defer rows.Close()
-    
+
     for rows.Next() {
         var record Record
         if err := rows.Scan(&record.ID, &record.Data); err != nil {
             return err
         }
-        
+
         // Process immediately, don't accumulate in memory
         if err := processor(&record); err != nil {
             return err
@@ -578,7 +590,7 @@ func processLargeDataset(db *pgxkit.DB, processor func(*Record) error) error {
 // Before
 db, err := sql.Open("postgres", dsn)
 
-// After  
+// After
 db := pgxkit.NewDB()
 err := db.Connect(ctx, dsn)
 ```
@@ -665,9 +677,9 @@ func getUserHandler(db *pgxkit.DB) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         // Use request context for cancellation
         ctx := r.Context()
-        
+
         userID, _ := strconv.Atoi(r.URL.Query().Get("id"))
-        
+
         var user User
         err := db.ReadQueryRow(ctx, "SELECT id, name FROM users WHERE id = $1", userID).
             Scan(&user.ID, &user.Name)
@@ -675,7 +687,7 @@ func getUserHandler(db *pgxkit.DB) http.HandlerFunc {
             http.Error(w, "User not found", http.StatusNotFound)
             return
         }
-        
+
         json.NewEncoder(w).Encode(user)
     }
 }
@@ -687,27 +699,27 @@ func getUserHandler(db *pgxkit.DB) http.HandlerFunc {
 func processJobs(db *pgxkit.DB) {
     ticker := time.NewTicker(10 * time.Second)
     defer ticker.Stop()
-    
+
     for range ticker.C {
         ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-        
+
         rows, err := db.Query(ctx, "SELECT id, data FROM jobs WHERE status = 'pending' LIMIT 10")
         if err != nil {
             log.Printf("Failed to fetch jobs: %v", err)
             cancel()
             continue
         }
-        
+
         for rows.Next() {
             var job Job
             if err := rows.Scan(&job.ID, &job.Data); err != nil {
                 log.Printf("Failed to scan job: %v", err)
                 continue
             }
-            
+
             go processJob(db, job)  // Process asynchronously
         }
-        
+
         rows.Close()
         cancel()
     }
@@ -730,4 +742,3 @@ func processJobs(db *pgxkit.DB) {
 
 *If you have a question that's not covered here, please [open an issue](https://github.com/nhalm/pgxkit/issues) or start a [discussion](https://github.com/nhalm/pgxkit/discussions).*
 
-*Last updated: December 2024* 
