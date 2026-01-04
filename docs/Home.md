@@ -46,7 +46,7 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
-    defer db.Close()
+    defer db.Shutdown(context.Background())
     
     // Execute a query
     var name string

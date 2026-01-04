@@ -1,6 +1,6 @@
 # API Reference
 
-**[← Back to Home](Home)**
+**[<- Back to Home](Home)**
 
 Complete API reference for pgxkit - the tool-agnostic PostgreSQL toolkit.
 
@@ -236,7 +236,7 @@ Executes a command (INSERT, UPDATE, DELETE) using the write pool.
 
 **Example:**
 ```go
-tag, err := db.Exec(ctx, "INSERT INTO users (name, email) VALUES ($1, $2)", 
+tag, err := db.Exec(ctx, "INSERT INTO users (name, email) VALUES ($1, $2)",
     "John Doe", "john@example.com")
 if err != nil {
     return err
@@ -255,8 +255,8 @@ Executes a command with automatic retry logic for transient failures.
 **Example:**
 ```go
 config := pgxkit.DefaultRetryConfig()
-tag, err := db.ExecWithRetry(ctx, config, 
-    "INSERT INTO users (name, email) VALUES ($1, $2)", 
+tag, err := db.ExecWithRetry(ctx, config,
+    "INSERT INTO users (name, email) VALUES ($1, $2)",
     "John Doe", "john@example.com")
 ```
 
@@ -301,9 +301,9 @@ err := db.WithTransaction(ctx, pgx.TxOptions{}, func(tx pgx.Tx) error {
     if err != nil {
         return err
     }
-    
+
     // Insert profile
-    _, err = tx.Exec(ctx, "INSERT INTO profiles (user_id, bio) VALUES ($1, $2)", 
+    _, err = tx.Exec(ctx, "INSERT INTO profiles (user_id, bio) VALUES ($1, $2)",
         userID, "Software Developer")
     return err
 })
@@ -506,11 +506,26 @@ Convert between Go time.Time and pgx timestamp/date types.
 ### UUID Conversions
 
 ```go
-func ToPgxUUID(u *uuid.UUID) pgtype.UUID
-func FromPgxUUID(u pgtype.UUID) *uuid.UUID
+func ToPgxUUID(id uuid.UUID) pgtype.UUID
+func FromPgxUUID(pgxID pgtype.UUID) uuid.UUID
+func ToPgxUUIDFromPtr(id *uuid.UUID) pgtype.UUID
+func FromPgxUUIDToPtr(pgxID pgtype.UUID) *uuid.UUID
 ```
 
-Convert between Google UUID and pgx UUID types.
+Convert between Google UUID and pgx UUID types. The base functions work with values directly, while the `Ptr` variants handle nullable UUIDs via pointers.
+
+**Example:**
+```go
+// Using with non-nullable UUIDs (value types)
+id := uuid.New()
+pgxID := pgxkit.ToPgxUUID(id)
+goID := pgxkit.FromPgxUUID(pgxID)
+
+// Using with nullable UUIDs (pointer types)
+var nullableID *uuid.UUID = nil
+pgxID := pgxkit.ToPgxUUIDFromPtr(nullableID) // Results in NULL
+goID := pgxkit.FromPgxUUIDToPtr(pgxID)       // Returns nil for NULL
+```
 
 ### JSON Helpers
 
@@ -531,7 +546,7 @@ type UserSettings struct {
 settings := UserSettings{Theme: "dark", Language: "en"}
 
 // Insert JSON
-_, err := db.Exec(ctx, "UPDATE users SET settings = $1 WHERE id = $2", 
+_, err := db.Exec(ctx, "UPDATE users SET settings = $1 WHERE id = $2",
     pgxkit.JSON(settings), userID)
 
 // Query JSON
@@ -681,8 +696,8 @@ All `DB` methods are thread-safe and can be called concurrently from multiple go
 
 ---
 
-**[← Back to Home](Home)**
+**[<- Back to Home](Home)**
 
 *This API reference covers all public types, functions, and methods in pgxkit. For practical usage examples, see the [Examples](Examples) page.*
 
-*Last updated: December 2024* 
+*Last updated: December 2024*
