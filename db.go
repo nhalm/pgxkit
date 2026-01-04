@@ -670,6 +670,18 @@ func (db *DB) ReadStats() *pgxpool.Stat {
 	return db.readPool.Stat()
 }
 
+// WritePool returns the underlying write connection pool.
+// Useful for integrating with code generation tools like sqlc.
+func (db *DB) WritePool() *pgxpool.Pool {
+	return db.writePool
+}
+
+// ReadPool returns the underlying read connection pool.
+// Returns nil if no separate read pool is configured.
+func (db *DB) ReadPool() *pgxpool.Pool {
+	return db.readPool
+}
+
 // HealthCheck performs a simple health check by pinging the database.
 // This is useful for health check endpoints and monitoring systems.
 // It returns an error if the database is not connected, shutting down, or unreachable.

@@ -380,10 +380,7 @@ func (r *UserRepository) GetUser(ctx context.Context, id UserID) (*User, error) 
     var user User
     err := r.db.ReadQueryRow(ctx,
         "SELECT id, name, email FROM users WHERE id = $1",
-        pgxkit.Int64(id)).Scan(
-            pgxkit.ScanInt64(&user.ID),
-            &user.Name,
-            &user.Email)
+        int64(id)).Scan(&user.ID, &user.Name, &user.Email)
 
     if err != nil {
         return nil, fmt.Errorf("failed to get user: %w", err)
@@ -600,4 +597,3 @@ func main() {
 **[<- Back to Home](Home)**
 
 *This comprehensive examples document shows how to use all of pgxkit's features in real-world scenarios. The tool-agnostic design makes it easy to integrate with any PostgreSQL development approach while providing production-ready features out of the box.*
-

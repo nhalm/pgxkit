@@ -511,7 +511,17 @@ func TestPerformanceRegression(t *testing.T) {
     db := testDB.EnableGolden("TestPerformanceRegression")
 
     // Create large dataset for performance testing
-    testDB.CreateLargeDataset(t, 10000) // 10k users
+    _, err := testDB.Exec(context.Background(), `
+        INSERT INTO users (name, email, active, created_at)
+        SELECT
+            'User ' || i,
+            'user' || i || '@example.com',
+            true,
+            NOW() - (i || ' minutes')::interval
+        FROM generate_series(1, 10000) AS i
+        ON CONFLICT DO NOTHING
+    `)
+    require.NoError(t, err)
 
     t.Run("pagination_performance", func(t *testing.T) {
         start := time.Now()
