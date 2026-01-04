@@ -46,24 +46,24 @@ Key metrics to monitor:
 func optimizeConnectionPool() *pgxkit.DB {
     // Calculate optimal pool size based on workload
     cpuCores := runtime.NumCPU()
-    
+
     // For CPU-bound workloads: 1-2 connections per core
     // For I/O-bound workloads: 2-4 connections per core
     maxConns := cpuCores * 3
-    
+
     // Configure DSN with connection pool parameters
     dsn := fmt.Sprintf("%s?pool_max_conns=%d&pool_min_conns=%d&pool_max_conn_lifetime=1h&pool_max_conn_idle_time=30m&pool_health_check_period=1m",
         pgxkit.GetDSN(),
         maxConns,
         maxConns/4, // Keep 25% as minimum
     )
-    
+
     db := pgxkit.NewDB()
     err := db.Connect(context.Background(), dsn)
     if err != nil {
         log.Fatal(err)
     }
-    
+
     return db
 }
 ```
@@ -74,29 +74,29 @@ func optimizeConnectionPool() *pgxkit.DB {
 func monitorConnectionPool(db *pgxkit.DB) {
     ticker := time.NewTicker(30 * time.Second)
     defer ticker.Stop()
-    
+
     for range ticker.C {
         stats := db.Stats()
         if stats == nil {
             continue
         }
-        
+
         // Calculate metrics
         utilization := float64(stats.AcquiredConns()) / float64(stats.MaxConns())
         idleRatio := float64(stats.IdleConns()) / float64(stats.TotalConns())
-        
+
         log.Printf("Pool Stats: Utilization=%.2f%%, Idle=%.2f%%, Total=%d, Max=%d",
             utilization*100, idleRatio*100, stats.TotalConns(), stats.MaxConns())
-        
+
         // Alerts for performance issues
         if utilization > 0.8 {
             log.Printf("WARNING: High pool utilization (%.2f%%) - consider scaling", utilization*100)
         }
-        
+
         if idleRatio > 0.7 {
             log.Printf("INFO: High idle connections (%.2f%%) - consider reducing pool size", idleRatio*100)
         }
-        
+
         // Track connection creation rate
         if stats.NewConnsCount() > 0 {
             log.Printf("New connections created: %d", stats.NewConnsCount())
@@ -133,9 +133,9 @@ func (apm *AdaptivePoolManager) adjustPoolSize() {
     if stats == nil {
         return
     }
-    
+
     utilization := float64(stats.AcquiredConns()) / float64(stats.MaxConns())
-    
+
     if utilization > apm.scaleUpThreshold && stats.MaxConns() < apm.maxConns {
         // Scale up
         newSize := int32(float64(stats.MaxConns()) * 1.2)
@@ -165,8 +165,8 @@ func (apm *AdaptivePoolManager) adjustPoolSize() {
 func getActiveUsers(db *pgxkit.DB) ([]User, error) {
     rows, err := db.ReadQuery(context.Background(), `
         SELECT id, name, email, created_at
-        FROM users 
-        WHERE active = true 
+        FROM users
+        WHERE active = true
         ORDER BY created_at DESC
         LIMIT 100
     `)
@@ -174,7 +174,7 @@ func getActiveUsers(db *pgxkit.DB) ([]User, error) {
         return nil, err
     }
     defer rows.Close()
-    
+
     var users []User
     for rows.Next() {
         var user User
@@ -183,7 +183,7 @@ func getActiveUsers(db *pgxkit.DB) ([]User, error) {
         }
         users = append(users, user)
     }
-    
+
     return users, nil
 }
 
@@ -193,7 +193,7 @@ func userExists(db *pgxkit.DB, email string) (bool, error) {
     err := db.ReadQueryRow(context.Background(), `
         SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)
     `, email).Scan(&exists)
-    
+
     return exists, err
 }
 ```
@@ -204,27 +204,27 @@ func userExists(db *pgxkit.DB, email string) (bool, error) {
 // Efficient bulk insert
 func createUsersBatch(db *pgxkit.DB, users []User) error {
     ctx := context.Background()
-    
+
     tx, err := db.BeginTx(ctx, pgx.TxOptions{})
     if err != nil {
         return err
     }
     defer tx.Rollback(ctx)
-    
+
     // Use COPY for large batches (1000+ records)
     if len(users) > 1000 {
         return createUsersWithCopy(tx, users)
     }
-    
+
     // Use batch insert for smaller sets
     batch := &pgx.Batch{}
     for _, user := range users {
         batch.Queue("INSERT INTO users (name, email) VALUES ($1, $2)", user.Name, user.Email)
     }
-    
+
     results := tx.SendBatch(ctx, batch)
     defer results.Close()
-    
+
     // Process results
     for i := 0; i < len(users); i++ {
         _, err := results.Exec()
@@ -232,14 +232,14 @@ func createUsersBatch(db *pgxkit.DB, users []User) error {
             return fmt.Errorf("failed to insert user %d: %w", i, err)
         }
     }
-    
+
     return tx.Commit(ctx)
 }
 
 // COPY for very large datasets
 func createUsersWithCopy(tx pgx.Tx, users []User) error {
     ctx := context.Background()
-    
+
     _, err := tx.CopyFrom(ctx,
         pgx.Identifier{"users"},
         []string{"name", "email"},
@@ -247,7 +247,7 @@ func createUsersWithCopy(tx pgx.Tx, users []User) error {
             return []interface{}{users[i].Name, users[i].Email}, nil
         }),
     )
-    
+
     return err
 }
 ```
@@ -276,24 +276,24 @@ func NewQueryCache(ttl time.Duration) *QueryCache {
 func (qc *QueryCache) Get(key string) (interface{}, bool) {
     qc.mutex.RLock()
     defer qc.mutex.RUnlock()
-    
+
     entry, exists := qc.cache[key]
     if !exists || time.Now().After(entry.ExpiresAt) {
         return nil, false
     }
-    
+
     return entry.Data, true
 }
 
 // Cached query example
 func getCachedUser(db *pgxkit.DB, cache *QueryCache, userID int) (*User, error) {
     cacheKey := fmt.Sprintf("user:%d", userID)
-    
+
     // Check cache first
     if cached, found := cache.Get(cacheKey); found {
         return cached.(*User), nil
     }
-    
+
     // Query database
     var user User
     err := db.ReadQueryRow(context.Background(),
@@ -302,10 +302,10 @@ func getCachedUser(db *pgxkit.DB, cache *QueryCache, userID int) (*User, error) 
     if err != nil {
         return nil, err
     }
-    
+
     // Cache result
     cache.Set(cacheKey, &user)
-    
+
     return &user, nil
 }
 ```
@@ -319,17 +319,17 @@ func createOptimizedReadWriteDB() *pgxkit.DB {
     // Write pool configuration (smaller, optimized for consistency)
     writeDSN := fmt.Sprintf("%s?pool_max_conns=20&pool_min_conns=5&pool_max_conn_lifetime=2h",
         getWriteDSN())
-    
+
     // Read pool configuration (larger, optimized for throughput)
     readDSN := fmt.Sprintf("%s?pool_max_conns=50&pool_min_conns=10&pool_max_conn_lifetime=1h&pool_max_conn_idle_time=15m",
         getReadDSN())
-    
+
     db := pgxkit.NewDB()
     err := db.ConnectReadWrite(context.Background(), readDSN, writeDSN)
     if err != nil {
         log.Fatal(err)
     }
-    
+
     return db
 }
 ```
@@ -383,12 +383,12 @@ func NewCacheManager(db *pgxkit.DB, redisClient *redis.Client) *CacheManager {
 
 func (cm *CacheManager) GetUser(ctx context.Context, userID int) (*User, error) {
     cacheKey := fmt.Sprintf("user:%d", userID)
-    
+
     // L1 Cache (in-memory)
     if cached, found := cm.l1Cache.Load(cacheKey); found {
         return cached.(*User), nil
     }
-    
+
     // L2 Cache (Redis)
     if cm.l2Cache != nil {
         cached, err := cm.l2Cache.Get(ctx, cacheKey).Result()
@@ -401,7 +401,7 @@ func (cm *CacheManager) GetUser(ctx context.Context, userID int) (*User, error) 
             }
         }
     }
-    
+
     // Database query
     var user User
     err := cm.db.ReadQueryRow(ctx,
@@ -410,7 +410,7 @@ func (cm *CacheManager) GetUser(ctx context.Context, userID int) (*User, error) 
     if err != nil {
         return nil, err
     }
-    
+
     // Store in caches
     cm.l1Cache.Store(cacheKey, &user)
     if cm.l2Cache != nil {
@@ -418,7 +418,7 @@ func (cm *CacheManager) GetUser(ctx context.Context, userID int) (*User, error) 
             cm.l2Cache.Set(ctx, cacheKey, data, 5*time.Minute)
         }
     }
-    
+
     return &user, nil
 }
 ```
@@ -428,10 +428,10 @@ func (cm *CacheManager) GetUser(ctx context.Context, userID int) (*User, error) 
 ```go
 func (cm *CacheManager) InvalidateUser(ctx context.Context, userID int) {
     cacheKey := fmt.Sprintf("user:%d", userID)
-    
+
     // Remove from L1 cache
     cm.l1Cache.Delete(cacheKey)
-    
+
     // Remove from L2 cache
     if cm.l2Cache != nil {
         cm.l2Cache.Del(ctx, cacheKey)
@@ -439,24 +439,32 @@ func (cm *CacheManager) InvalidateUser(ctx context.Context, userID int) {
 }
 
 // Automatic cache invalidation with hooks
-func setupCacheInvalidation(db *pgxkit.DB, cache *CacheManager) {
-    db.AddHook(pgxkit.AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-        if operationErr != nil {
-            return nil // Don't invalidate on error
-        }
-        
-        // Parse SQL to determine what to invalidate
-        if isUserModification(sql) {
-            // Extract user ID from args and invalidate
-            if len(args) > 0 {
-                if userID, ok := args[0].(int); ok {
-                    cache.InvalidateUser(ctx, userID)
+func setupCacheInvalidationDB(cache *CacheManager) *pgxkit.DB {
+    db := pgxkit.NewDB()
+    err := db.Connect(context.Background(), pgxkit.GetDSN(),
+        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+            if operationErr != nil {
+                return nil // Don't invalidate on error
+            }
+
+            // Parse SQL to determine what to invalidate
+            if isUserModification(sql) {
+                // Extract user ID from args and invalidate
+                if len(args) > 0 {
+                    if userID, ok := args[0].(int); ok {
+                        cache.InvalidateUser(ctx, userID)
+                    }
                 }
             }
-        }
-        
-        return nil
-    })
+
+            return nil
+        }),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    return db
 }
 ```
 
@@ -506,32 +514,34 @@ func NewPerformanceMetrics() *PerformanceMetrics {
     }
 }
 
-func setupPerformanceMonitoring(db *pgxkit.DB, metrics *PerformanceMetrics) {
-    // Query performance monitoring
-    db.AddHook(pgxkit.BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-        start := time.Now()
-        return context.WithValue(ctx, "perf_start", start)
-    })
-    
-    db.AddHook(pgxkit.AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-        start, ok := ctx.Value("perf_start").(time.Time)
-        if !ok {
+func setupPerformanceMonitoringDB(metrics *PerformanceMetrics) *pgxkit.DB {
+    db := pgxkit.NewDB()
+    err := db.Connect(context.Background(), pgxkit.GetDSN(),
+        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+            start, ok := ctx.Value("perf_start").(time.Time)
+            if !ok {
+                return nil
+            }
+
+            duration := time.Since(start)
+            operation := extractOperation(sql)
+            table := extractTable(sql)
+            status := "success"
+            if operationErr != nil {
+                status = "error"
+            }
+
+            metrics.QueryDuration.WithLabelValues(operation, table, status).Observe(duration.Seconds())
+            metrics.QueryCounter.WithLabelValues(operation, table, status).Inc()
+
             return nil
-        }
-        
-        duration := time.Since(start)
-        operation := extractOperation(sql)
-        table := extractTable(sql)
-        status := "success"
-        if operationErr != nil {
-            status = "error"
-        }
-        
-        metrics.QueryDuration.WithLabelValues(operation, table, status).Observe(duration.Seconds())
-        metrics.QueryCounter.WithLabelValues(operation, table, status).Inc()
-        
-        return nil
-    })
+        }),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    return db
 }
 ```
 
@@ -547,10 +557,10 @@ func TestQueryPerformance(t *testing.T) {
 
     // Enable golden testing to capture EXPLAIN plans
     db := testDB.EnableGolden("TestQueryPerformance")
-    
+
     // Create test data
     createTestData(t, testDB, 10000)
-    
+
     // Test critical queries
     t.Run("user_search_performance", func(t *testing.T) {
         // This query's EXPLAIN plan will be captured
@@ -567,13 +577,13 @@ func TestQueryPerformance(t *testing.T) {
             t.Fatal(err)
         }
         defer rows.Close()
-        
+
         // Verify results
         var count int
         for rows.Next() {
             count++
         }
-        
+
         if count == 0 {
             t.Error("Expected search results")
         }
@@ -593,11 +603,11 @@ CREATE INDEX CONCURRENTLY idx_orders_user_created ON orders(user_id, created_at 
 
 -- Partial indexes for specific conditions
 CREATE INDEX CONCURRENTLY idx_users_active ON users(id) WHERE active = true;
-CREATE INDEX CONCURRENTLY idx_orders_recent ON orders(created_at DESC) 
+CREATE INDEX CONCURRENTLY idx_orders_recent ON orders(created_at DESC)
     WHERE created_at > NOW() - INTERVAL '30 days';
 
 -- Composite indexes for complex queries
-CREATE INDEX CONCURRENTLY idx_users_search ON users 
+CREATE INDEX CONCURRENTLY idx_users_search ON users
     USING gin(to_tsvector('english', name || ' ' || email));
 ```
 
@@ -606,35 +616,35 @@ CREATE INDEX CONCURRENTLY idx_users_search ON users
 ```go
 func analyzeQueryPlan(db *pgxkit.DB, sql string, args ...interface{}) {
     ctx := context.Background()
-    
+
     // Get query plan
     explainSQL := "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + sql
     row := db.QueryRow(ctx, explainSQL, args...)
-    
+
     var planJSON string
     err := row.Scan(&planJSON)
     if err != nil {
         log.Printf("Failed to get query plan: %v", err)
         return
     }
-    
+
     // Parse and analyze plan
     var plan map[string]interface{}
     if err := json.Unmarshal([]byte(planJSON), &plan); err != nil {
         log.Printf("Failed to parse query plan: %v", err)
         return
     }
-    
+
     // Extract key metrics
     if plans, ok := plan["Plan"].([]interface{}); ok && len(plans) > 0 {
         if planData, ok := plans[0].(map[string]interface{}); ok {
             executionTime := planData["Actual Total Time"]
             planningTime := plan["Planning Time"]
-            
+
             log.Printf("Query: %s", sql)
             log.Printf("Execution Time: %v ms", executionTime)
             log.Printf("Planning Time: %v ms", planningTime)
-            
+
             // Check for performance issues
             if execTime, ok := executionTime.(float64); ok && execTime > 1000 {
                 log.Printf("WARNING: Slow query detected (%.2f ms)", execTime)
@@ -659,11 +669,11 @@ func (cm *ConnectionManager) ExecuteInTransaction(ctx context.Context, fn func(t
         return err
     }
     defer tx.Rollback(ctx)
-    
+
     if err := fn(tx); err != nil {
         return err
     }
-    
+
     return tx.Commit(ctx)
 }
 
@@ -677,7 +687,7 @@ func (cm *ConnectionManager) CreateUserWithProfile(ctx context.Context, user *Us
         if err != nil {
             return err
         }
-        
+
         // Insert profile
         _, err = tx.Exec(ctx,
             "INSERT INTO profiles (user_id, bio, avatar) VALUES ($1, $2, $3)",
@@ -692,29 +702,29 @@ func (cm *ConnectionManager) CreateUserWithProfile(ctx context.Context, user *Us
 ```go
 func streamLargeResultSet(db *pgxkit.DB, processor func(*User) error) error {
     ctx := context.Background()
-    
+
     rows, err := db.ReadQuery(ctx, `
-        SELECT id, name, email 
-        FROM users 
+        SELECT id, name, email
+        FROM users
         ORDER BY id
     `)
     if err != nil {
         return err
     }
     defer rows.Close()
-    
+
     for rows.Next() {
         var user User
         if err := rows.Scan(&user.ID, &user.Name, &user.Email); err != nil {
             return err
         }
-        
+
         // Process each user immediately
         if err := processor(&user); err != nil {
             return err
         }
     }
-    
+
     return rows.Err()
 }
 ```
@@ -744,7 +754,7 @@ func identifySlowQueries(analyzer *QueryAnalyzer) {
     slowQueries := analyzer.GetSlowQueries()
     for _, query := range slowQueries {
         avgDuration := query.TotalDuration / time.Duration(query.Count)
-        log.Printf("Slow query: %s (avg: %v, count: %d)", 
+        log.Printf("Slow query: %s (avg: %v, count: %d)",
             query.SQL, avgDuration, query.Count)
     }
 }
@@ -756,7 +766,7 @@ func identifySlowQueries(analyzer *QueryAnalyzer) {
 func monitorMemoryUsage() {
     var m runtime.MemStats
     runtime.ReadMemStats(&m)
-    
+
     log.Printf("Memory Stats: Alloc=%d KB, TotalAlloc=%d KB, Sys=%d KB, NumGC=%d",
         bToKb(m.Alloc), bToKb(m.TotalAlloc), bToKb(m.Sys), m.NumGC)
 }
@@ -819,4 +829,3 @@ func bToKb(b uint64) uint64 {
 
 *Following these performance optimization strategies will help you build high-performance applications with pgxkit while maintaining reliability and scalability.*
 
-*Last updated: December 2024* 

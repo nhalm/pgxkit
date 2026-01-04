@@ -15,7 +15,11 @@ func BenchmarkHookOverhead(b *testing.B) {
 	}
 
 	b.Run("NoHooks", func(b *testing.B) {
-		db := NewDBWithPool(pool)
+		db := &DB{
+			readPool:  pool,
+			writePool: pool,
+			hooks:     newHooks(),
+		}
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -105,7 +109,11 @@ func BenchmarkPoolOperations(b *testing.B) {
 	}
 
 	b.Run("Query", func(b *testing.B) {
-		db := NewDBWithPool(pool)
+		db := &DB{
+			readPool:  pool,
+			writePool: pool,
+			hooks:     newHooks(),
+		}
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -118,7 +126,11 @@ func BenchmarkPoolOperations(b *testing.B) {
 	})
 
 	b.Run("QueryRow", func(b *testing.B) {
-		db := NewDBWithPool(pool)
+		db := &DB{
+			readPool:  pool,
+			writePool: pool,
+			hooks:     newHooks(),
+		}
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -131,7 +143,11 @@ func BenchmarkPoolOperations(b *testing.B) {
 	})
 
 	b.Run("Exec", func(b *testing.B) {
-		db := NewDBWithPool(pool)
+		db := &DB{
+			readPool:  pool,
+			writePool: pool,
+			hooks:     newHooks(),
+		}
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -149,7 +165,11 @@ func BenchmarkPoolOperations(b *testing.B) {
 			b.Skip("TEST_DATABASE_URL not set, skipping benchmark")
 		}
 
-		db := NewReadWriteDB(readPool, writePool)
+		db := &DB{
+			readPool:  readPool,
+			writePool: writePool,
+			hooks:     newHooks(),
+		}
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -170,7 +190,11 @@ func BenchmarkConcurrentOperations(b *testing.B) {
 		b.Skip("TEST_DATABASE_URL not set, skipping benchmark")
 	}
 
-	db := NewDBWithPool(pool)
+	db := &DB{
+		readPool:  pool,
+		writePool: pool,
+		hooks:     newHooks(),
+	}
 
 	b.Run("Concurrent", func(b *testing.B) {
 		b.RunParallel(func(pb *testing.PB) {

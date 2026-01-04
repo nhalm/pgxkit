@@ -31,22 +31,6 @@ func TestNewDB(t *testing.T) {
 	}
 }
 
-func TestNewReadWriteDB(t *testing.T) {
-	db := NewReadWriteDB(nil, nil)
-	if db == nil {
-		t.Error("NewReadWriteDB should not return nil")
-		return
-	}
-
-	if db.hooks == nil {
-		t.Error("NewReadWriteDB should initialize hooks")
-	}
-
-	if db.shutdown {
-		t.Error("NewReadWriteDB should not be in shutdown state")
-	}
-}
-
 func TestConnectOptions(t *testing.T) {
 	cfg := newConnectConfig()
 
@@ -572,10 +556,10 @@ func TestConnectionHookOptions(t *testing.T) {
 	})(cfg)
 
 	ctx := context.Background()
-	cfg.hooks.connectionHooks.ExecuteOnConnect(nil)
-	cfg.hooks.connectionHooks.ExecuteOnDisconnect(nil)
-	cfg.hooks.connectionHooks.ExecuteOnAcquire(ctx, nil)
-	cfg.hooks.connectionHooks.ExecuteOnRelease(nil)
+	cfg.hooks.connectionHooks.executeOnConnect(nil)
+	cfg.hooks.connectionHooks.executeOnDisconnect(nil)
+	cfg.hooks.connectionHooks.executeOnAcquire(ctx, nil)
+	cfg.hooks.connectionHooks.executeOnRelease(nil)
 
 	if !connectCalled {
 		t.Error("WithOnConnect hook should have been called")
@@ -635,7 +619,6 @@ func TestHooksConfigurePool(t *testing.T) {
 
 	ctx := context.Background()
 
-	// OnConnect via AfterConnect (called once on connection creation)
 	err := poolConfig.AfterConnect(ctx, nil)
 	if err != nil {
 		t.Errorf("AfterConnect should not return error: %v", err)
@@ -644,7 +627,6 @@ func TestHooksConfigurePool(t *testing.T) {
 		t.Error("OnConnect hook should have been called")
 	}
 
-	// OnAcquire via PrepareConn (called every checkout)
 	ok, err := poolConfig.PrepareConn(ctx, nil)
 	if !ok || err != nil {
 		t.Errorf("PrepareConn should return (true, nil), got (%v, %v)", ok, err)
@@ -653,7 +635,6 @@ func TestHooksConfigurePool(t *testing.T) {
 		t.Error("OnAcquire hook should have been called")
 	}
 
-	// OnRelease via AfterRelease (called every return)
 	ok = poolConfig.AfterRelease(nil)
 	if !ok {
 		t.Error("AfterRelease should return true")
@@ -662,7 +643,6 @@ func TestHooksConfigurePool(t *testing.T) {
 		t.Error("OnRelease hook should have been called")
 	}
 
-	// OnDisconnect via BeforeClose (called once on connection destruction)
 	poolConfig.BeforeClose(nil)
 	if !disconnectCalled {
 		t.Error("OnDisconnect hook should have been called")
@@ -736,32 +716,16 @@ func TestDBStats(t *testing.T) {
 
 	writeStats := db.Stats()
 	readStats := db.ReadStats()
-	writeStatsAgain := db.WriteStats()
 
-	if writeStats != nil || readStats != nil || writeStatsAgain != nil {
+	if writeStats != nil || readStats != nil {
 		t.Error("Stats should be nil when pools are nil")
 	}
 }
-
-func TestDBReadWriteStats(t *testing.T) {
-	db := NewReadWriteDB(nil, nil)
-
-	writeStats := db.Stats()
-	readStats := db.ReadStats()
-	writeStatsAgain := db.WriteStats()
-
-	if writeStats != nil || readStats != nil || writeStatsAgain != nil {
-		t.Error("Stats should be nil when pools are nil")
-	}
-}
-
-// Race condition tests - run with `go test -race` to detect data races
 
 func TestConcurrentHookExecution(t *testing.T) {
 	hooks := newHooks()
 	var counter atomic.Int64
 
-	// Add multiple hooks
 	for i := 0; i < 10; i++ {
 		hooks.addHook(BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
 			counter.Add(1)
@@ -769,7 +733,6 @@ func TestConcurrentHookExecution(t *testing.T) {
 		})
 	}
 
-	// Execute hooks concurrently from multiple goroutines
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
 		wg.Add(1)
@@ -787,7 +750,6 @@ func TestConcurrentHookExecution(t *testing.T) {
 }
 
 func TestConcurrentOptionApplication(t *testing.T) {
-	// Apply options concurrently to separate configs (no shared state)
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
 		wg.Add(1)
@@ -805,30 +767,27 @@ func TestConcurrentOptionApplication(t *testing.T) {
 }
 
 func TestConcurrentConnectionHookAddAndExecute(t *testing.T) {
-	ch := NewConnectionHooks()
+	ch := newConnectionHooks()
 	var counter atomic.Int64
 
-	// Concurrently add hooks and execute them
 	var wg sync.WaitGroup
 
-	// Writers - add hooks
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ch.AddOnConnect(func(conn *pgx.Conn) error {
+			ch.addOnConnect(func(conn *pgx.Conn) error {
 				counter.Add(1)
 				return nil
 			})
 		}()
 	}
 
-	// Readers - execute hooks
 	for i := 0; i < 100; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_ = ch.ExecuteOnConnect(nil)
+			_ = ch.executeOnConnect(nil)
 		}()
 	}
 
@@ -838,7 +797,6 @@ func TestConcurrentConnectionHookAddAndExecute(t *testing.T) {
 func TestConcurrentDBMethodAccess(t *testing.T) {
 	db := NewDB()
 
-	// Concurrent reads of various DB state
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
 		wg.Add(1)
