@@ -81,7 +81,9 @@ func (tdb *TestDB) Setup() error {
 	return nil
 }
 
-// Clean cleans the database after the test
+// Clean performs cleanup operations after a test completes.
+// It verifies the database connection is still active and can be extended
+// to truncate tables or reset test data. Returns nil if no pool is configured.
 func (tdb *TestDB) Clean() error {
 	ctx := context.Background()
 
@@ -97,7 +99,16 @@ func (tdb *TestDB) Clean() error {
 	return nil
 }
 
-// EnableGolden returns a new DB with golden test hooks added
+// EnableGolden returns a new DB instance configured with golden test hooks.
+// Golden tests capture EXPLAIN ANALYZE output for each query, enabling detection
+// of query plan regressions. The testName is used to name the golden file.
+// Use AssertGolden after test execution to compare against baseline plans.
+//
+// Example:
+//
+//	goldenDB := testDB.EnableGolden("user_queries")
+//	// run queries using goldenDB
+//	goldenDB.AssertGolden(t, "user_queries")
 func (tdb *TestDB) EnableGolden(testName string) *DB {
 	goldenDB := &DB{
 		readPool:  tdb.readPool,
@@ -125,7 +136,9 @@ type goldenTestHook struct {
 	db           *DB
 }
 
-// QueryPlan represents a captured query and its EXPLAIN plan
+// QueryPlan represents a captured query execution plan from EXPLAIN ANALYZE.
+// It stores the SQL statement, the full JSON plan output, and timing metrics
+// for use in golden test comparisons.
 type QueryPlan struct {
 	Query       int                      `json:"query"`
 	SQL         string                   `json:"sql"`
@@ -293,7 +306,10 @@ func (g *goldenTestHook) appendToGoldenFile(queryPlan QueryPlan) error {
 	return nil
 }
 
-// AssertGolden compares captured query plans with existing golden file
+// AssertGolden compares captured query plans against a baseline file.
+// On first run, it creates a baseline file from the current golden output.
+// On subsequent runs, it compares the current plans against the baseline
+// and reports test failures for any query count, SQL, or plan changes.
 func (db *DB) AssertGolden(t *testing.T, testName string) {
 	goldenFile := fmt.Sprintf("testdata/golden/%s.json", testName)
 
@@ -373,7 +389,9 @@ func RequireDB(t *testing.T) *TestDB {
 	return testDB
 }
 
-// CleanupGolden removes all golden files for a test
+// CleanupGolden removes all golden test files for the specified test name.
+// This includes both the captured query plan file and its baseline file
+// from the testdata/golden directory.
 func CleanupGolden(testName string) error {
 	if testName == "" {
 		return nil

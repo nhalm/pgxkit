@@ -60,7 +60,7 @@ type hooks struct {
 	onShutdown        []HookFunc
 
 	// Connection-level hooks (pgx native signatures)
-	connectionHooks *ConnectionHooks
+	connectionHooks *connectionHooks
 }
 
 // newHooks creates a new hooks manager
@@ -71,7 +71,7 @@ func newHooks() *hooks {
 		beforeTransaction: make([]HookFunc, 0),
 		afterTransaction:  make([]HookFunc, 0),
 		onShutdown:        make([]HookFunc, 0),
-		connectionHooks:   NewConnectionHooks(),
+		connectionHooks:   newConnectionHooks(),
 	}
 }
 
@@ -159,10 +159,10 @@ func (h *hooks) executeOnShutdown(ctx context.Context, sql string, args []interf
 	return nil
 }
 
-// ConnectionHooks manages connection lifecycle hooks.
+// connectionHooks manages connection lifecycle hooks.
 // These hooks are integrated with pgx's connection lifecycle and are useful
 // for connection setup, validation, and cleanup. They use pgx's native function signatures.
-type ConnectionHooks struct {
+type connectionHooks struct {
 	mu           sync.RWMutex
 	onConnect    []func(*pgx.Conn) error
 	onDisconnect []func(*pgx.Conn)
@@ -170,19 +170,9 @@ type ConnectionHooks struct {
 	onRelease    []func(*pgx.Conn)
 }
 
-// NewConnectionHooks creates a new connection hooks manager.
-// This is used internally by the DB type but can also be used directly
-// for advanced connection pool configuration.
-//
-// Example:
-//
-//	hooks := pgxkit.NewConnectionHooks()
-//	hooks.AddOnConnect(func(conn *pgx.Conn) error {
-//	    log.Println("New connection established")
-//	    return nil
-//	})
-func NewConnectionHooks() *ConnectionHooks {
-	return &ConnectionHooks{
+// newConnectionHooks creates a new connection hooks manager.
+func newConnectionHooks() *connectionHooks {
+	return &connectionHooks{
 		onConnect:    make([]func(*pgx.Conn) error, 0),
 		onDisconnect: make([]func(*pgx.Conn), 0),
 		onAcquire:    make([]func(context.Context, *pgx.Conn) error, 0),
@@ -190,45 +180,36 @@ func NewConnectionHooks() *ConnectionHooks {
 	}
 }
 
-// AddOnConnect adds a callback that will be called when a new connection is established.
-// This is useful for connection initialization, setting session variables, or validation.
-// If the callback returns an error, the connection will be closed.
-//
-// Example:
-//
-//	hooks.AddOnConnect(func(conn *pgx.Conn) error {
-//	    _, err := conn.Exec(context.Background(), "SET application_name = 'myapp'")
-//	    return err
-//	})
-func (h *ConnectionHooks) AddOnConnect(fn func(*pgx.Conn) error) {
+// addOnConnect adds a callback that will be called when a new connection is established.
+func (h *connectionHooks) addOnConnect(fn func(*pgx.Conn) error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.onConnect = append(h.onConnect, fn)
 }
 
-// AddOnDisconnect adds a callback that will be called when a connection is closed
-func (h *ConnectionHooks) AddOnDisconnect(fn func(*pgx.Conn)) {
+// addOnDisconnect adds a callback that will be called when a connection is closed
+func (h *connectionHooks) addOnDisconnect(fn func(*pgx.Conn)) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.onDisconnect = append(h.onDisconnect, fn)
 }
 
-// AddOnAcquire adds a callback that will be called when a connection is acquired from the pool
-func (h *ConnectionHooks) AddOnAcquire(fn func(context.Context, *pgx.Conn) error) {
+// addOnAcquire adds a callback that will be called when a connection is acquired from the pool
+func (h *connectionHooks) addOnAcquire(fn func(context.Context, *pgx.Conn) error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.onAcquire = append(h.onAcquire, fn)
 }
 
-// AddOnRelease adds a callback that will be called when a connection is released back to the pool
-func (h *ConnectionHooks) AddOnRelease(fn func(*pgx.Conn)) {
+// addOnRelease adds a callback that will be called when a connection is released back to the pool
+func (h *connectionHooks) addOnRelease(fn func(*pgx.Conn)) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.onRelease = append(h.onRelease, fn)
 }
 
-// ExecuteOnConnect executes all OnConnect callbacks
-func (h *ConnectionHooks) ExecuteOnConnect(conn *pgx.Conn) error {
+// executeOnConnect executes all OnConnect callbacks
+func (h *connectionHooks) executeOnConnect(conn *pgx.Conn) error {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -240,8 +221,8 @@ func (h *ConnectionHooks) ExecuteOnConnect(conn *pgx.Conn) error {
 	return nil
 }
 
-// ExecuteOnDisconnect executes all OnDisconnect callbacks
-func (h *ConnectionHooks) ExecuteOnDisconnect(conn *pgx.Conn) {
+// executeOnDisconnect executes all OnDisconnect callbacks
+func (h *connectionHooks) executeOnDisconnect(conn *pgx.Conn) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -250,8 +231,8 @@ func (h *ConnectionHooks) ExecuteOnDisconnect(conn *pgx.Conn) {
 	}
 }
 
-// ExecuteOnAcquire executes all OnAcquire callbacks
-func (h *ConnectionHooks) ExecuteOnAcquire(ctx context.Context, conn *pgx.Conn) error {
+// executeOnAcquire executes all OnAcquire callbacks
+func (h *connectionHooks) executeOnAcquire(ctx context.Context, conn *pgx.Conn) error {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -263,8 +244,8 @@ func (h *ConnectionHooks) ExecuteOnAcquire(ctx context.Context, conn *pgx.Conn) 
 	return nil
 }
 
-// ExecuteOnRelease executes all OnRelease callbacks
-func (h *ConnectionHooks) ExecuteOnRelease(conn *pgx.Conn) {
+// executeOnRelease executes all OnRelease callbacks
+func (h *connectionHooks) executeOnRelease(conn *pgx.Conn) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -273,31 +254,27 @@ func (h *ConnectionHooks) ExecuteOnRelease(conn *pgx.Conn) {
 	}
 }
 
-// Common hook functions for typical use cases
+// validationHook creates a hook that validates connections
+func validationHook() *connectionHooks {
+	hooks := newConnectionHooks()
 
-// ValidationHook creates a hook that validates connections
-func ValidationHook() *ConnectionHooks {
-	hooks := NewConnectionHooks()
-
-	hooks.AddOnConnect(func(conn *pgx.Conn) error {
-		// Validate connection by running a simple query
+	hooks.addOnConnect(func(conn *pgx.Conn) error {
 		_, err := conn.Exec(context.Background(), "SELECT 1")
 		return err
 	})
 
-	hooks.AddOnAcquire(func(ctx context.Context, conn *pgx.Conn) error {
-		// Validate connection is still alive
+	hooks.addOnAcquire(func(ctx context.Context, conn *pgx.Conn) error {
 		return conn.Ping(ctx)
 	})
 
 	return hooks
 }
 
-// SetupHook creates a hook that sets up connection-specific settings
-func SetupHook(setupSQL string) *ConnectionHooks {
-	hooks := NewConnectionHooks()
+// setupHook creates a hook that sets up connection-specific settings
+func setupHook(setupSQL string) *connectionHooks {
+	hooks := newConnectionHooks()
 
-	hooks.AddOnConnect(func(conn *pgx.Conn) error {
+	hooks.addOnConnect(func(conn *pgx.Conn) error {
 		if setupSQL != "" {
 			_, err := conn.Exec(context.Background(), setupSQL)
 			return err
@@ -308,27 +285,27 @@ func SetupHook(setupSQL string) *ConnectionHooks {
 	return hooks
 }
 
-// CombineHooks combines multiple hook managers into one
-func CombineHooks(hooksList ...*ConnectionHooks) *ConnectionHooks {
-	combined := NewConnectionHooks()
+// combineHooks combines multiple hook managers into one
+func combineHooks(hooksList ...*connectionHooks) *connectionHooks {
+	combined := newConnectionHooks()
 
 	for _, hooks := range hooksList {
 		hooks.mu.RLock()
 
 		for _, fn := range hooks.onConnect {
-			combined.AddOnConnect(fn)
+			combined.addOnConnect(fn)
 		}
 
 		for _, fn := range hooks.onDisconnect {
-			combined.AddOnDisconnect(fn)
+			combined.addOnDisconnect(fn)
 		}
 
 		for _, fn := range hooks.onAcquire {
-			combined.AddOnAcquire(fn)
+			combined.addOnAcquire(fn)
 		}
 
 		for _, fn := range hooks.onRelease {
-			combined.AddOnRelease(fn)
+			combined.addOnRelease(fn)
 		}
 
 		hooks.mu.RUnlock()
@@ -337,39 +314,34 @@ func CombineHooks(hooksList ...*ConnectionHooks) *ConnectionHooks {
 	return combined
 }
 
-// ConfigurePool configures a pgxpool.Config with the connection hooks
-// This allows the hooks to be properly integrated with the pool lifecycle
+// configurePool configures a pgxpool.Config with the connection hooks
 func (h *hooks) configurePool(config *pgxpool.Config) {
-	h.connectionHooks.ConfigurePool(config)
+	h.connectionHooks.configurePool(config)
 }
 
-// ConfigurePool configures a pgxpool.Config with the connection hooks
-// This integrates the hooks with the actual pool lifecycle events
-func (ch *ConnectionHooks) ConfigurePool(config *pgxpool.Config) {
+// configurePool configures a pgxpool.Config with the connection hooks
+func (ch *connectionHooks) configurePool(config *pgxpool.Config) {
 	originalAfterConnect := config.AfterConnect
 	originalBeforeClose := config.BeforeClose
 	originalPrepareConn := config.PrepareConn
 	originalAfterRelease := config.AfterRelease
 
-	// AfterConnect: called once when connection is created
 	config.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
 		if originalAfterConnect != nil {
 			if err := originalAfterConnect(ctx, conn); err != nil {
 				return err
 			}
 		}
-		return ch.ExecuteOnConnect(conn)
+		return ch.executeOnConnect(conn)
 	}
 
-	// BeforeClose: called once when connection is destroyed
 	config.BeforeClose = func(conn *pgx.Conn) {
-		ch.ExecuteOnDisconnect(conn)
+		ch.executeOnDisconnect(conn)
 		if originalBeforeClose != nil {
 			originalBeforeClose(conn)
 		}
 	}
 
-	// PrepareConn: called every time connection is checked out from pool
 	config.PrepareConn = func(ctx context.Context, conn *pgx.Conn) (bool, error) {
 		if originalPrepareConn != nil {
 			ok, err := originalPrepareConn(ctx, conn)
@@ -377,18 +349,17 @@ func (ch *ConnectionHooks) ConfigurePool(config *pgxpool.Config) {
 				return ok, err
 			}
 		}
-		if err := ch.ExecuteOnAcquire(ctx, conn); err != nil {
-			return false, nil // destroy connection on error, retry with new connection
+		if err := ch.executeOnAcquire(ctx, conn); err != nil {
+			return false, nil
 		}
 		return true, nil
 	}
 
-	// AfterRelease: called every time connection is returned to pool
 	config.AfterRelease = func(conn *pgx.Conn) bool {
-		ch.ExecuteOnRelease(conn)
+		ch.executeOnRelease(conn)
 		if originalAfterRelease != nil {
 			return originalAfterRelease(conn)
 		}
-		return true // keep connection in pool
+		return true
 	}
 }

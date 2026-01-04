@@ -652,5 +652,3 @@ func TestFromPgxInt8Array(t *testing.T) {
 
 // Note: Bytea type is not available in pgtype package
 // Tests removed - use []byte directly with pgx scan/value interfaces
-
-

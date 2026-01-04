@@ -9,47 +9,41 @@ import (
 )
 
 func TestConnectionHooks(t *testing.T) {
-	hooks := NewConnectionHooks()
+	hooks := newConnectionHooks()
 	if hooks == nil {
-		t.Fatal("Expected NewConnectionHooks to return non-nil")
+		t.Fatal("Expected newConnectionHooks to return non-nil")
 	}
 
-	// Test that hooks start empty
-	err := hooks.ExecuteOnConnect(nil)
+	err := hooks.executeOnConnect(nil)
 	if err != nil {
 		t.Errorf("Expected no error from empty OnConnect hooks, got %v", err)
 	}
 
-	hooks.ExecuteOnDisconnect(nil)
-	// No assertion needed, just ensure it doesn't panic
+	hooks.executeOnDisconnect(nil)
 
-	err = hooks.ExecuteOnAcquire(context.Background(), nil)
+	err = hooks.executeOnAcquire(context.Background(), nil)
 	if err != nil {
 		t.Errorf("Expected no error from empty OnAcquire hooks, got %v", err)
 	}
 
-	hooks.ExecuteOnRelease(nil)
-	// No assertion needed, just ensure it doesn't panic
+	hooks.executeOnRelease(nil)
 }
 
 func TestAddOnConnectHooks(t *testing.T) {
-	hooks := NewConnectionHooks()
+	hooks := newConnectionHooks()
 	callCount := 0
 
-	// Add first hook
-	hooks.AddOnConnect(func(conn *pgx.Conn) error {
+	hooks.addOnConnect(func(conn *pgx.Conn) error {
 		callCount++
 		return nil
 	})
 
-	// Add second hook
-	hooks.AddOnConnect(func(conn *pgx.Conn) error {
+	hooks.addOnConnect(func(conn *pgx.Conn) error {
 		callCount += 10
 		return nil
 	})
 
-	// Execute hooks
-	err := hooks.ExecuteOnConnect(nil)
+	err := hooks.executeOnConnect(nil)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
@@ -60,41 +54,37 @@ func TestAddOnConnectHooks(t *testing.T) {
 }
 
 func TestOnConnectHookError(t *testing.T) {
-	hooks := NewConnectionHooks()
+	hooks := newConnectionHooks()
 	expectedErr := errors.New("connection failed")
 
-	// Add hook that returns error
-	hooks.AddOnConnect(func(conn *pgx.Conn) error {
+	hooks.addOnConnect(func(conn *pgx.Conn) error {
 		return expectedErr
 	})
 
-	// Add hook that should not be called due to error
-	hooks.AddOnConnect(func(conn *pgx.Conn) error {
+	hooks.addOnConnect(func(conn *pgx.Conn) error {
 		t.Error("Second hook should not be called when first hook errors")
 		return nil
 	})
 
-	err := hooks.ExecuteOnConnect(nil)
+	err := hooks.executeOnConnect(nil)
 	if err != expectedErr {
 		t.Errorf("Expected error %v, got %v", expectedErr, err)
 	}
 }
 
 func TestAddOnDisconnectHooks(t *testing.T) {
-	hooks := NewConnectionHooks()
+	hooks := newConnectionHooks()
 	callCount := 0
 
-	// Add hooks
-	hooks.AddOnDisconnect(func(conn *pgx.Conn) {
+	hooks.addOnDisconnect(func(conn *pgx.Conn) {
 		callCount++
 	})
 
-	hooks.AddOnDisconnect(func(conn *pgx.Conn) {
+	hooks.addOnDisconnect(func(conn *pgx.Conn) {
 		callCount += 10
 	})
 
-	// Execute hooks
-	hooks.ExecuteOnDisconnect(nil)
+	hooks.executeOnDisconnect(nil)
 
 	if callCount != 11 {
 		t.Errorf("Expected callCount to be 11, got %d", callCount)
@@ -102,22 +92,20 @@ func TestAddOnDisconnectHooks(t *testing.T) {
 }
 
 func TestAddOnAcquireHooks(t *testing.T) {
-	hooks := NewConnectionHooks()
+	hooks := newConnectionHooks()
 	callCount := 0
 
-	// Add hooks
-	hooks.AddOnAcquire(func(ctx context.Context, conn *pgx.Conn) error {
+	hooks.addOnAcquire(func(ctx context.Context, conn *pgx.Conn) error {
 		callCount++
 		return nil
 	})
 
-	hooks.AddOnAcquire(func(ctx context.Context, conn *pgx.Conn) error {
+	hooks.addOnAcquire(func(ctx context.Context, conn *pgx.Conn) error {
 		callCount += 10
 		return nil
 	})
 
-	// Execute hooks
-	err := hooks.ExecuteOnAcquire(context.Background(), nil)
+	err := hooks.executeOnAcquire(context.Background(), nil)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
@@ -128,35 +116,32 @@ func TestAddOnAcquireHooks(t *testing.T) {
 }
 
 func TestOnAcquireHookError(t *testing.T) {
-	hooks := NewConnectionHooks()
+	hooks := newConnectionHooks()
 	expectedErr := errors.New("acquire failed")
 
-	// Add hook that returns error
-	hooks.AddOnAcquire(func(ctx context.Context, conn *pgx.Conn) error {
+	hooks.addOnAcquire(func(ctx context.Context, conn *pgx.Conn) error {
 		return expectedErr
 	})
 
-	err := hooks.ExecuteOnAcquire(context.Background(), nil)
+	err := hooks.executeOnAcquire(context.Background(), nil)
 	if err != expectedErr {
 		t.Errorf("Expected error %v, got %v", expectedErr, err)
 	}
 }
 
 func TestAddOnReleaseHooks(t *testing.T) {
-	hooks := NewConnectionHooks()
+	hooks := newConnectionHooks()
 	callCount := 0
 
-	// Add hooks
-	hooks.AddOnRelease(func(conn *pgx.Conn) {
+	hooks.addOnRelease(func(conn *pgx.Conn) {
 		callCount++
 	})
 
-	hooks.AddOnRelease(func(conn *pgx.Conn) {
+	hooks.addOnRelease(func(conn *pgx.Conn) {
 		callCount += 10
 	})
 
-	// Execute hooks
-	hooks.ExecuteOnRelease(nil)
+	hooks.executeOnRelease(nil)
 
 	if callCount != 11 {
 		t.Errorf("Expected callCount to be 11, got %d", callCount)
@@ -164,40 +149,36 @@ func TestAddOnReleaseHooks(t *testing.T) {
 }
 
 func TestCombineHooks(t *testing.T) {
-	// Create first hook set
-	hooks1 := NewConnectionHooks()
+	hooks1 := newConnectionHooks()
 	callOrder := []string{}
 
-	hooks1.AddOnConnect(func(conn *pgx.Conn) error {
+	hooks1.addOnConnect(func(conn *pgx.Conn) error {
 		callOrder = append(callOrder, "hooks1-connect")
 		return nil
 	})
 
-	hooks1.AddOnDisconnect(func(conn *pgx.Conn) {
+	hooks1.addOnDisconnect(func(conn *pgx.Conn) {
 		callOrder = append(callOrder, "hooks1-disconnect")
 	})
 
-	// Create second hook set
-	hooks2 := NewConnectionHooks()
-	hooks2.AddOnConnect(func(conn *pgx.Conn) error {
+	hooks2 := newConnectionHooks()
+	hooks2.addOnConnect(func(conn *pgx.Conn) error {
 		callOrder = append(callOrder, "hooks2-connect")
 		return nil
 	})
 
-	hooks2.AddOnDisconnect(func(conn *pgx.Conn) {
+	hooks2.addOnDisconnect(func(conn *pgx.Conn) {
 		callOrder = append(callOrder, "hooks2-disconnect")
 	})
 
-	// Combine hooks
-	combined := CombineHooks(hooks1, hooks2)
+	combined := combineHooks(hooks1, hooks2)
 
-	// Test that all hooks are executed
-	err := combined.ExecuteOnConnect(nil)
+	err := combined.executeOnConnect(nil)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
 
-	combined.ExecuteOnDisconnect(nil)
+	combined.executeOnDisconnect(nil)
 
 	expectedOrder := []string{
 		"hooks1-connect",
@@ -218,38 +199,32 @@ func TestCombineHooks(t *testing.T) {
 }
 
 func TestCombineHooksEmpty(t *testing.T) {
-	// Test combining with no hooks
-	combined := CombineHooks()
+	combined := combineHooks()
 	if combined == nil {
-		t.Error("Expected CombineHooks() to return non-nil even with no arguments")
+		t.Error("Expected combineHooks() to return non-nil even with no arguments")
 	}
 
-	// Should not panic
-	err := combined.ExecuteOnConnect(nil)
+	err := combined.executeOnConnect(nil)
 	if err != nil {
 		t.Errorf("Expected no error from empty combined hooks, got %v", err)
 	}
 }
 
 func TestValidationHook(t *testing.T) {
-	hooks := ValidationHook()
+	hooks := validationHook()
 	if hooks == nil {
-		t.Fatal("Expected ValidationHook to return non-nil")
+		t.Fatal("Expected validationHook to return non-nil")
 	}
-
-	// Test that we can create validation hooks without error
-	// (Full testing would require a real database connection)
 }
 
 func TestSetupHook(t *testing.T) {
-	hooks := SetupHook("SET timezone = 'UTC'")
+	hooks := setupHook("SET timezone = 'UTC'")
 	if hooks == nil {
-		t.Fatal("Expected SetupHook to return non-nil")
+		t.Fatal("Expected setupHook to return non-nil")
 	}
 
-	// Test with empty SQL
-	hooks = SetupHook("")
+	hooks = setupHook("")
 	if hooks == nil {
-		t.Fatal("Expected SetupHook to return non-nil even with empty SQL")
+		t.Fatal("Expected setupHook to return non-nil even with empty SQL")
 	}
 }
