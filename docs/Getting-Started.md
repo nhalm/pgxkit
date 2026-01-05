@@ -158,14 +158,19 @@ rows, err := db.ReadQuery(ctx, "SELECT * FROM users")
 ### Add Retry Logic
 
 ```go
-// Retry database operations
-config := pgxkit.DefaultRetryConfig()
-err := pgxkit.RetryOperation(ctx, config, func(ctx context.Context) error {
+// Retry with defaults (3 attempts, 100ms base delay, 1s max delay, 2x backoff)
+err := pgxkit.RetryOperation(ctx, func(ctx context.Context) error {
     _, err := db.Exec(ctx,
         "INSERT INTO users (name, email) VALUES ($1, $2)",
         "Jane Doe", "jane@example.com")
     return err
 })
+
+// Or with custom retry configuration
+err = pgxkit.RetryOperation(ctx, func(ctx context.Context) error {
+    _, err := db.Exec(ctx, "INSERT INTO users ...")
+    return err
+}, pgxkit.WithMaxRetries(5), pgxkit.WithBaseDelay(200*time.Millisecond))
 ```
 
 ## What's Next?

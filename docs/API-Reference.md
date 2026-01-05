@@ -36,19 +36,6 @@ The main database abstraction that provides read/write pool management, hooks, a
 - Graceful shutdown with operation tracking
 - Connection pool statistics
 
-### DBConfig
-
-```go
-type DBConfig struct {
-    MaxConns        int32         // Maximum number of connections in the pool
-    MinConns        int32         // Minimum number of connections in the pool
-    MaxConnLifetime time.Duration // Maximum lifetime of a connection
-    MaxConnIdleTime time.Duration // Maximum idle time for a connection
-}
-```
-
-Configuration options for database connection pools.
-
 ## Database Connection
 
 ### NewDB
@@ -362,56 +349,42 @@ err := db.Connect(ctx, dsn,
 
 ## Retry Logic
 
-### RetryConfig
+### RetryOption
 
 ```go
-type RetryConfig struct {
-    MaxRetries int           // Maximum number of retry attempts
-    BaseDelay  time.Duration // Initial delay between retries
-    MaxDelay   time.Duration // Maximum delay between retries
-    Multiplier float64       // Multiplier for exponential backoff
-}
+type RetryOption func(*retryConfig)
 ```
 
-Configuration for retry logic with exponential backoff.
+Functional option for configuring retry behavior.
 
-### DefaultRetryConfig
+### Retry Option Functions
 
 ```go
-func DefaultRetryConfig() *RetryConfig
-```
-
-Returns a sensible default retry configuration (3 retries, 100ms base delay, 1s max delay, 2x multiplier).
-
-**Example:**
-```go
-config := pgxkit.DefaultRetryConfig()
-// Customize if needed:
-config.MaxRetries = 5
-config.MaxDelay = 5 * time.Second
+func WithMaxRetries(n int) RetryOption        // Maximum retry attempts (default: 3)
+func WithBaseDelay(d time.Duration) RetryOption   // Initial delay (default: 100ms)
+func WithMaxDelay(d time.Duration) RetryOption    // Maximum delay (default: 1s)
+func WithBackoffMultiplier(m float64) RetryOption // Backoff multiplier (default: 2.0)
 ```
 
 ### RetryOperation
 
 ```go
-func RetryOperation(ctx context.Context, config *RetryConfig, fn func(ctx context.Context) error) error
+func RetryOperation(ctx context.Context, operation func(ctx context.Context) error, opts ...RetryOption) error
 ```
 
-Retries any operation that returns an error, using the provided retry configuration with exponential backoff. Only retryable errors (connection issues, deadlocks, serialization failures) trigger retries.
+Retries any operation that returns an error, using exponential backoff. Only retryable errors (connection issues, deadlocks, serialization failures) trigger retries.
 
 **Example:**
 ```go
-config := pgxkit.DefaultRetryConfig()
-
-// Retry an exec operation
-err := pgxkit.RetryOperation(ctx, config, func(ctx context.Context) error {
+// Retry with default settings
+err := pgxkit.RetryOperation(ctx, func(ctx context.Context) error {
     _, err := db.Exec(ctx, "INSERT INTO users (name, email) VALUES ($1, $2)",
         "John Doe", "john@example.com")
     return err
 })
 
-// Retry a query operation
-err = pgxkit.RetryOperation(ctx, config, func(ctx context.Context) error {
+// Retry with custom configuration
+err = pgxkit.RetryOperation(ctx, func(ctx context.Context) error {
     rows, err := db.Query(ctx, "SELECT * FROM users WHERE active = true")
     if err != nil {
         return err
@@ -419,10 +392,10 @@ err = pgxkit.RetryOperation(ctx, config, func(ctx context.Context) error {
     defer rows.Close()
     // Process rows...
     return nil
-})
+}, pgxkit.WithMaxRetries(5), pgxkit.WithMaxDelay(5*time.Second))
 
 // Retry a transaction
-err = pgxkit.RetryOperation(ctx, config, func(ctx context.Context) error {
+err = pgxkit.RetryOperation(ctx, func(ctx context.Context) error {
     tx, err := db.BeginTx(ctx, pgx.TxOptions{})
     if err != nil {
         return err
@@ -432,7 +405,7 @@ err = pgxkit.RetryOperation(ctx, config, func(ctx context.Context) error {
     // Perform transaction operations...
 
     return tx.Commit(ctx)
-})
+}, pgxkit.WithMaxRetries(3))
 ```
 
 ### WithTimeout

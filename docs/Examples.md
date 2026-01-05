@@ -193,16 +193,16 @@ func setupMetrics() *pgxkit.DB {
 
 ## Retry Logic
 
-### Basic Retry Configuration
+### Basic Retry
 
 ```go
 func executeWithRetry(db *pgxkit.DB) {
-    config := pgxkit.DefaultRetryConfig()
-    config.MaxRetries = 3
-    config.BaseDelay = 100 * time.Millisecond
-
-    // Retry failed operations
-    err := pgxkit.RetryOperation(ctx, config, func(ctx context.Context) error {
+    // Retry with default settings:
+    // - 3 retry attempts
+    // - 100ms initial delay
+    // - 1s maximum delay
+    // - 2x exponential backoff
+    err := pgxkit.RetryOperation(ctx, func(ctx context.Context) error {
         _, err := db.Exec(ctx,
             "INSERT INTO users (name, email) VALUES ($1, $2)",
             "Jane Doe", "jane@example.com")
@@ -216,14 +216,33 @@ func executeWithRetry(db *pgxkit.DB) {
 }
 ```
 
+### Retry with Custom Configuration
+
+```go
+func executeWithCustomRetry(db *pgxkit.DB) {
+    // Retry with custom settings using functional options
+    err := pgxkit.RetryOperation(ctx, func(ctx context.Context) error {
+        _, err := db.Exec(ctx,
+            "INSERT INTO users (name, email) VALUES ($1, $2)",
+            "Jane Doe", "jane@example.com")
+        return err
+    },
+        pgxkit.WithMaxRetries(5),
+        pgxkit.WithBaseDelay(50*time.Millisecond),
+        pgxkit.WithMaxDelay(2*time.Second),
+    )
+    if err != nil {
+        log.Fatal("Failed after retries:", err)
+    }
+}
+```
+
 ### Retry Queries
 
 ```go
 func queryWithRetry(db *pgxkit.DB) ([]User, error) {
-    config := pgxkit.DefaultRetryConfig()
-
     var users []User
-    err := pgxkit.RetryOperation(ctx, config, func(ctx context.Context) error {
+    err := pgxkit.RetryOperation(ctx, func(ctx context.Context) error {
         rows, err := db.Query(ctx, "SELECT id, name, email FROM users WHERE active = true")
         if err != nil {
             return err
@@ -239,7 +258,7 @@ func queryWithRetry(db *pgxkit.DB) ([]User, error) {
             users = append(users, user)
         }
         return rows.Err()
-    })
+    }, pgxkit.WithMaxRetries(3))
 
     return users, err
 }
@@ -249,9 +268,7 @@ func queryWithRetry(db *pgxkit.DB) ([]User, error) {
 
 ```go
 func executeTransactionWithRetry(db *pgxkit.DB) error {
-    config := pgxkit.DefaultRetryConfig()
-
-    return pgxkit.RetryOperation(ctx, config, func(ctx context.Context) error {
+    return pgxkit.RetryOperation(ctx, func(ctx context.Context) error {
         tx, err := db.BeginTx(ctx, pgx.TxOptions{})
         if err != nil {
             return err
@@ -270,20 +287,7 @@ func executeTransactionWithRetry(db *pgxkit.DB) error {
         }
 
         return tx.Commit(ctx)
-    })
-}
-```
-
-### Custom Retry Logic
-
-```go
-func customRetryConfig() *pgxkit.RetryConfig {
-    return &pgxkit.RetryConfig{
-        MaxRetries: 5,
-        BaseDelay:  50 * time.Millisecond,
-        MaxDelay:   2 * time.Second,
-        Multiplier: 2.0,
-    }
+    }, pgxkit.WithMaxRetries(5), pgxkit.WithBackoffMultiplier(2.0))
 }
 ```
 
