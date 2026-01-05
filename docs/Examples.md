@@ -197,7 +197,11 @@ func setupMetrics() *pgxkit.DB {
 
 ```go
 func executeWithRetry(db *pgxkit.DB) {
-    // Retry with default settings (3 retries, 100ms base delay, exponential backoff)
+    // Retry with default settings:
+    // - 3 retry attempts
+    // - 100ms initial delay
+    // - 1s maximum delay
+    // - 2x exponential backoff
     err := pgxkit.RetryOperation(ctx, func(ctx context.Context) error {
         _, err := db.Exec(ctx,
             "INSERT INTO users (name, email) VALUES ($1, $2)",

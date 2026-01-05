@@ -171,7 +171,11 @@ err := db.Connect(ctx, dsn,
 ### RetryOperation Function
 
 ```go
-// Retry with default settings (3 retries, exponential backoff)
+// Retry with default settings:
+// - 3 retry attempts
+// - 100ms initial delay
+// - 1s maximum delay
+// - 2x exponential backoff
 err := pgxkit.RetryOperation(ctx, func(ctx context.Context) error {
     _, err := db.Exec(ctx, "INSERT INTO users (name, email) VALUES ($1, $2)",
         "John Doe", "john@example.com")
