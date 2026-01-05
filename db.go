@@ -56,7 +56,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// getEnvWithDefault returns the value of the environment variable or a default value
 func getEnvWithDefault(key, def string) string {
 	val := os.Getenv(key)
 	if val == "" {
@@ -65,7 +64,6 @@ func getEnvWithDefault(key, def string) string {
 	return val
 }
 
-// getEnvIntWithDefault returns the value of the environment variable as an int or a default value
 func getEnvIntWithDefault(key string, def int) int {
 	val := os.Getenv(key)
 	if val == "" {
@@ -78,12 +76,10 @@ func getEnvIntWithDefault(key string, def int) int {
 	return n
 }
 
-// getDSN returns the database connection string using environment variables
 func getDSN() string {
 	return getDSNWithSearchPath("")
 }
 
-// getDSNWithSearchPath returns the database connection string with a custom search path
 func getDSNWithSearchPath(searchPath string) string {
 	host := getEnvWithDefault("POSTGRES_HOST", "localhost")
 	port := getEnvIntWithDefault("POSTGRES_PORT", 5432)
@@ -136,15 +132,6 @@ type DB struct {
 	mu        sync.RWMutex
 	shutdown  bool
 	activeOps sync.WaitGroup
-}
-
-// DBConfig holds configuration options for database connections.
-// These options are applied when creating connection pools.
-type DBConfig struct {
-	MaxConns        int32
-	MinConns        int32
-	MaxConnLifetime time.Duration
-	MaxConnIdleTime time.Duration
 }
 
 // ConnectOption configures a database connection.

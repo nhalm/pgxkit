@@ -171,17 +171,15 @@ err := db.Connect(ctx, dsn,
 ### RetryOperation Function
 
 ```go
-config := pgxkit.DefaultRetryConfig() // 3 retries, exponential backoff
-
-// Retry any database operation
-err := pgxkit.RetryOperation(ctx, config, func(ctx context.Context) error {
+// Retry with default settings (3 retries, exponential backoff)
+err := pgxkit.RetryOperation(ctx, func(ctx context.Context) error {
     _, err := db.Exec(ctx, "INSERT INTO users (name, email) VALUES ($1, $2)",
         "John Doe", "john@example.com")
     return err
 })
 
-// Retry a query operation
-err = pgxkit.RetryOperation(ctx, config, func(ctx context.Context) error {
+// Retry with custom configuration
+err = pgxkit.RetryOperation(ctx, func(ctx context.Context) error {
     rows, err := db.Query(ctx, "SELECT * FROM users")
     if err != nil {
         return err
@@ -189,12 +187,12 @@ err = pgxkit.RetryOperation(ctx, config, func(ctx context.Context) error {
     defer rows.Close()
     // Process rows...
     return nil
-})
+}, pgxkit.WithMaxRetries(5), pgxkit.WithMaxDelay(5*time.Second))
 
 // Retry with timeout
-result, err := pgxkit.WithTimeoutAndRetry(ctx, 5*time.Second, config, func(ctx context.Context) (*User, error) {
+result, err := pgxkit.WithTimeoutAndRetry(ctx, 5*time.Second, func(ctx context.Context) (*User, error) {
     return getUserFromDatabase(ctx)
-})
+}, pgxkit.WithMaxRetries(3))
 ```
 
 ### Smart Error Detection

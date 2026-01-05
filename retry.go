@@ -11,31 +11,58 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// RetryConfig holds configuration for retry logic.
-// It uses exponential backoff with jitter to avoid thundering herd problems.
-type RetryConfig struct {
-	MaxRetries int           // Maximum number of retry attempts
-	BaseDelay  time.Duration // Initial delay between retries
-	MaxDelay   time.Duration // Maximum delay between retries
-	Multiplier float64       // Multiplier for exponential backoff
+type retryConfig struct {
+	maxRetries int
+	baseDelay  time.Duration
+	maxDelay   time.Duration
+	multiplier float64
 }
 
-// DefaultRetryConfig returns a sensible default retry configuration.
-// It provides 3 retries with exponential backoff starting at 100ms,
-// capped at 1 second with a 2x multiplier.
-//
-// Example:
-//
-//	config := pgxkit.DefaultRetryConfig()
-//	// Customize if needed:
-//	config.MaxRetries = 5
-//	config.MaxDelay = 5 * time.Second
-func DefaultRetryConfig() *RetryConfig {
-	return &RetryConfig{
-		MaxRetries: 3,
-		BaseDelay:  100 * time.Millisecond,
-		MaxDelay:   1 * time.Second,
-		Multiplier: 2.0,
+func defaultRetryConfig() *retryConfig {
+	return &retryConfig{
+		maxRetries: 3,
+		baseDelay:  100 * time.Millisecond,
+		maxDelay:   1 * time.Second,
+		multiplier: 2.0,
+	}
+}
+
+// RetryOption configures retry behavior for operations.
+type RetryOption func(*retryConfig)
+
+// WithMaxRetries sets the maximum number of retry attempts.
+func WithMaxRetries(n int) RetryOption {
+	return func(c *retryConfig) {
+		if n >= 0 {
+			c.maxRetries = n
+		}
+	}
+}
+
+// WithBaseDelay sets the initial delay between retries.
+func WithBaseDelay(d time.Duration) RetryOption {
+	return func(c *retryConfig) {
+		if d > 0 {
+			c.baseDelay = d
+		}
+	}
+}
+
+// WithMaxDelay sets the maximum delay between retries.
+func WithMaxDelay(d time.Duration) RetryOption {
+	return func(c *retryConfig) {
+		if d > 0 {
+			c.maxDelay = d
+		}
+	}
+}
+
+// WithBackoffMultiplier sets the multiplier for exponential backoff.
+func WithBackoffMultiplier(m float64) RetryOption {
+	return func(c *retryConfig) {
+		if m > 0 {
+			c.multiplier = m
+		}
 	}
 }
 
@@ -59,52 +86,53 @@ func WithTimeout[T any](ctx context.Context, timeout time.Duration, fn func(cont
 //
 // Example:
 //
-//	config := pgxkit.DefaultRetryConfig()
-//	result, err := pgxkit.WithTimeoutAndRetry(ctx, 5*time.Second, config, func(ctx context.Context) (*User, error) {
+//	result, err := pgxkit.WithTimeoutAndRetry(ctx, 5*time.Second, func(ctx context.Context) (*User, error) {
 //	    return getUserFromDatabase(ctx)
-//	})
-func WithTimeoutAndRetry[T any](ctx context.Context, timeout time.Duration, retryConfig *RetryConfig, fn func(context.Context) (T, error)) (T, error) {
-	if retryConfig == nil {
-		retryConfig = DefaultRetryConfig()
-	}
-
+//	}, pgxkit.WithMaxRetries(5), pgxkit.WithBaseDelay(200*time.Millisecond))
+func WithTimeoutAndRetry[T any](ctx context.Context, timeout time.Duration, fn func(context.Context) (T, error), opts ...RetryOption) (T, error) {
 	var result T
-	err := RetryOperation(ctx, retryConfig, func(ctx context.Context) error {
+	err := RetryOperation(ctx, func(ctx context.Context) error {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 
 		var err error
 		result, err = fn(ctx)
 		return err
-	})
+	}, opts...)
 
 	return result, err
 }
 
-// RetryOperation is the generic retry function that can be used with any operation
-func RetryOperation(ctx context.Context, config *RetryConfig, operation func(context.Context) error) error {
-	if config == nil {
-		config = DefaultRetryConfig()
+// RetryOperation executes an operation with configurable retry logic.
+// It uses exponential backoff to avoid thundering herd problems.
+//
+// Example:
+//
+//	err := pgxkit.RetryOperation(ctx, func(ctx context.Context) error {
+//	    return doSomething(ctx)
+//	}, pgxkit.WithMaxRetries(5), pgxkit.WithMaxDelay(5*time.Second))
+func RetryOperation(ctx context.Context, operation func(context.Context) error, opts ...RetryOption) error {
+	cfg := defaultRetryConfig()
+	for _, opt := range opts {
+		opt(cfg)
 	}
 
 	var lastErr error
-	delay := config.BaseDelay
+	delay := cfg.baseDelay
 
-	for attempt := 0; attempt <= config.MaxRetries; attempt++ {
+	for attempt := 0; attempt <= cfg.maxRetries; attempt++ {
 		if attempt > 0 {
-			// Apply exponential backoff
-			if delay > config.MaxDelay {
-				delay = config.MaxDelay
+			if delay > cfg.maxDelay {
+				delay = cfg.maxDelay
 			}
 
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-time.After(delay):
-				// Continue with retry
 			}
 
-			delay = time.Duration(float64(delay) * config.Multiplier)
+			delay = time.Duration(float64(delay) * cfg.multiplier)
 		}
 
 		err := operation(ctx)
@@ -114,18 +142,16 @@ func RetryOperation(ctx context.Context, config *RetryConfig, operation func(con
 
 		lastErr = err
 
-		// Check if error is retryable
 		if !IsRetryableError(err) {
 			return err
 		}
 
-		// Don't retry on context cancellation
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 	}
 
-	return fmt.Errorf("operation failed after %d attempts, last error: %w", config.MaxRetries+1, lastErr)
+	return fmt.Errorf("operation failed after %d attempts, last error: %w", cfg.maxRetries+1, lastErr)
 }
 
 // IsRetryableError determines if an error is worth retrying
@@ -134,15 +160,12 @@ func IsRetryableError(err error) bool {
 		return false
 	}
 
-	// Context errors are not retryable
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
 
-	// Check for PostgreSQL connection errors
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
-		// These are PostgreSQL error codes that might be retryable
 		switch pgErr.Code {
 		case "08000", // connection_exception
 			"08003", // connection_does_not_exist
@@ -158,17 +181,14 @@ func IsRetryableError(err error) bool {
 		return false
 	}
 
-	// Check for connection errors from pgx
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false // Not retryable
+		return false
 	}
 
-	// Check for network/connection errors
 	if errors.Is(err, pgx.ErrTxClosed) || errors.Is(err, pgx.ErrTxCommitRollback) {
-		return false // Not retryable
+		return false
 	}
 
-	// Generic connection errors might be retryable
 	errStr := err.Error()
 	if strings.Contains(errStr, "connection refused") ||
 		strings.Contains(errStr, "connection reset") ||
