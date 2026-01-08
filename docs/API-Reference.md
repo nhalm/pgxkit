@@ -366,24 +366,42 @@ func WithMaxDelay(d time.Duration) RetryOption    // Maximum delay (default: 1s)
 func WithBackoffMultiplier(m float64) RetryOption // Backoff multiplier (default: 2.0)
 ```
 
+### Timeout Behavior
+
+The timeout (set via `context.WithTimeout`) applies to **all retry attempts combined**, not per-attempt. If your timeout is 5 seconds and the first attempt takes 3 seconds, subsequent retries share the remaining 2 seconds.
+
 ### Retryable Errors
 
 The retry logic only retries specific transient errors that may succeed on subsequent attempts:
 
-**Retried:**
-- Network timeouts (`net.Error` with `Timeout() == true`)
-- Network operation errors: dial, read, write failures (`net.OpError`)
-- PostgreSQL connection errors: `08000`, `08003`, `08006`
-- PostgreSQL server errors: `57P01` (admin_shutdown), `57P02` (crash_shutdown), `57P03` (cannot_connect_now)
-- PostgreSQL concurrency errors: `40001` (serialization_failure), `40P01` (deadlock_detected)
+| Error Type | Retries? | Examples |
+|------------|----------|----------|
+| Network timeouts | Yes | context deadline exceeded during dial |
+| Connection failures | Yes | connection refused, connection reset |
+| PostgreSQL connection errors | Yes | 08000, 08003, 08006 |
+| Server shutdown | Yes | 57P01, 57P02, 57P03 |
+| Serialization/deadlock | Yes | 40001, 40P01 |
+| Context cancellation | No | context canceled |
+| No rows found | No | pgx.ErrNoRows |
+| Constraint violations | No | unique_violation, foreign_key_violation |
+| Syntax errors | No | syntax_error |
 
-**Not Retried (return immediately):**
-- Context cancellation or deadline exceeded
-- `pgx.ErrNoRows`
-- `pgx.ErrTxClosed`, `pgx.ErrTxCommitRollback`
-- Constraint violations (unique, foreign key, not null)
-- Syntax errors, invalid queries
-- Any other PostgreSQL errors
+### IsRetryableError
+
+```go
+func IsRetryableError(err error) bool
+```
+
+Check if an error would be retried by the retry logic. Useful for custom retry handling or logging.
+
+**Example:**
+```go
+if pgxkit.IsRetryableError(err) {
+    log.Println("Transient error - would retry")
+} else {
+    log.Println("Permanent error - would not retry")
+}
+```
 
 ### RetryOperation
 

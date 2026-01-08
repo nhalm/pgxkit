@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -74,6 +75,14 @@ func Retry[T any](ctx context.Context, fn func(context.Context) (T, error), opts
 		opt(cfg)
 	}
 
+	// Validate configuration
+	if cfg.baseDelay > cfg.maxDelay {
+		cfg.maxDelay = cfg.baseDelay
+	}
+	if cfg.multiplier < 1.0 {
+		cfg.multiplier = 1.0
+	}
+
 	var zero T
 	var lastErr error
 	delay := cfg.baseDelay
@@ -84,17 +93,19 @@ func Retry[T any](ctx context.Context, fn func(context.Context) (T, error), opts
 		}
 
 		if attempt > 0 {
-			if delay > cfg.maxDelay {
-				delay = cfg.maxDelay
-			}
-
 			select {
 			case <-ctx.Done():
 				return zero, ctx.Err()
 			case <-time.After(delay):
 			}
 
-			delay = time.Duration(float64(delay) * cfg.multiplier)
+			// Calculate next delay with overflow protection
+			nextDelay := time.Duration(float64(delay) * cfg.multiplier)
+			if nextDelay <= 0 || nextDelay > cfg.maxDelay {
+				delay = cfg.maxDelay
+			} else {
+				delay = nextDelay
+			}
 		}
 
 		result, err := fn(ctx)
@@ -162,6 +173,14 @@ func IsRetryableError(err error) bool {
 		return false
 	}
 
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		switch opErr.Op {
+		case "dial", "read", "write":
+			return true
+		}
+	}
+
 	var netErr net.Error
 	if errors.As(err, &netErr) {
 		if netErr.Timeout() {
@@ -169,12 +188,13 @@ func IsRetryableError(err error) bool {
 		}
 	}
 
-	var opErr *net.OpError
-	if errors.As(err, &opErr) {
-		switch opErr.Op {
-		case "dial", "read", "write":
-			return true
-		}
+	// Fallback for string-based network error detection
+	errStr := err.Error()
+	if strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "network is unreachable") ||
+		strings.Contains(errStr, "no route to host") {
+		return true
 	}
 
 	return false
