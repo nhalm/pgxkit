@@ -193,19 +193,40 @@ err = pgxkit.RetryOperation(ctx, func(ctx context.Context) error {
     return nil
 }, pgxkit.WithMaxRetries(5), pgxkit.WithMaxDelay(5*time.Second))
 
-// Retry with timeout
-result, err := pgxkit.WithTimeoutAndRetry(ctx, 5*time.Second, func(ctx context.Context) (*User, error) {
+// Retry with timeout using context.WithTimeout
+ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+defer cancel()
+user, err := pgxkit.Retry(ctx, func(ctx context.Context) (*User, error) {
     return getUserFromDatabase(ctx)
 }, pgxkit.WithMaxRetries(3))
 ```
+
+### Timeout Behavior
+
+The timeout (set via `context.WithTimeout`) applies to **all retry attempts combined**, not per-attempt. If your timeout is 5 seconds and the first attempt takes 3 seconds, subsequent retries share the remaining 2 seconds.
 
 ### Smart Error Detection
 
 pgxkit automatically detects which PostgreSQL errors are worth retrying:
 
+| Error Type | Retries? | Examples |
+|------------|----------|----------|
+| Network timeouts | Yes | context deadline exceeded during dial |
+| Connection failures | Yes | connection refused, connection reset |
+| PostgreSQL connection errors | Yes | 08000, 08003, 08006 |
+| Server shutdown | Yes | 57P01, 57P02, 57P03 |
+| Serialization/deadlock | Yes | 40001, 40P01 |
+| Context cancellation | No | context canceled |
+| No rows found | No | pgx.ErrNoRows |
+| Constraint violations | No | unique_violation, foreign_key_violation |
+| Syntax errors | No | syntax_error |
+
 ```go
+// Check if an error would be retried
 if pgxkit.IsRetryableError(err) {
-    // Connection errors, deadlocks, serialization failures, etc.
+    log.Println("Transient error - would retry")
+} else {
+    log.Println("Permanent error - would not retry")
 }
 ```
 

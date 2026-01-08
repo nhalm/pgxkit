@@ -366,6 +366,43 @@ func WithMaxDelay(d time.Duration) RetryOption    // Maximum delay (default: 1s)
 func WithBackoffMultiplier(m float64) RetryOption // Backoff multiplier (default: 2.0)
 ```
 
+### Timeout Behavior
+
+The timeout (set via `context.WithTimeout`) applies to **all retry attempts combined**, not per-attempt. If your timeout is 5 seconds and the first attempt takes 3 seconds, subsequent retries share the remaining 2 seconds.
+
+### Retryable Errors
+
+The retry logic only retries specific transient errors that may succeed on subsequent attempts:
+
+| Error Type | Retries? | Examples |
+|------------|----------|----------|
+| Network timeouts | Yes | context deadline exceeded during dial |
+| Connection failures | Yes | connection refused, connection reset |
+| PostgreSQL connection errors | Yes | 08000, 08003, 08006 |
+| Server shutdown | Yes | 57P01, 57P02, 57P03 |
+| Serialization/deadlock | Yes | 40001, 40P01 |
+| Context cancellation | No | context canceled |
+| No rows found | No | pgx.ErrNoRows |
+| Constraint violations | No | unique_violation, foreign_key_violation |
+| Syntax errors | No | syntax_error |
+
+### IsRetryableError
+
+```go
+func IsRetryableError(err error) bool
+```
+
+Check if an error would be retried by the retry logic. Useful for custom retry handling or logging.
+
+**Example:**
+```go
+if pgxkit.IsRetryableError(err) {
+    log.Println("Transient error - would retry")
+} else {
+    log.Println("Permanent error - would not retry")
+}
+```
+
 ### RetryOperation
 
 ```go
@@ -408,19 +445,27 @@ err = pgxkit.RetryOperation(ctx, func(ctx context.Context) error {
 }, pgxkit.WithMaxRetries(3))
 ```
 
-### WithTimeout
+### Retry
 
 ```go
-func WithTimeout[T any](ctx context.Context, timeout time.Duration, fn func(context.Context) (T, error)) (T, error)
+func Retry[T any](ctx context.Context, fn func(context.Context) (T, error), opts ...RetryOption) (T, error)
 ```
 
-Generic utility function that executes a function with a timeout.
+Generic retry function that retries an operation returning a value and error, using exponential backoff. Only retryable errors (connection issues, deadlocks, serialization failures) trigger retries.
 
 **Example:**
 ```go
-result, err := pgxkit.WithTimeout(ctx, 5*time.Second, func(ctx context.Context) (*User, error) {
+// Basic retry returning a value
+user, err := pgxkit.Retry(ctx, func(ctx context.Context) (*User, error) {
     return getUserFromDatabase(ctx)
 })
+
+// Retry with timeout using context.WithTimeout
+ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+defer cancel()
+user, err := pgxkit.Retry(ctx, func(ctx context.Context) (*User, error) {
+    return getUserFromDatabase(ctx)
+}, pgxkit.WithMaxRetries(3))
 ```
 
 ## Type Helpers
