@@ -193,8 +193,10 @@ err = pgxkit.RetryOperation(ctx, func(ctx context.Context) error {
     return nil
 }, pgxkit.WithMaxRetries(5), pgxkit.WithMaxDelay(5*time.Second))
 
-// Retry with timeout
-result, err := pgxkit.WithTimeoutAndRetry(ctx, 5*time.Second, func(ctx context.Context) (*User, error) {
+// Retry with timeout using context.WithTimeout
+ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+defer cancel()
+user, err := pgxkit.Retry(ctx, func(ctx context.Context) (*User, error) {
     return getUserFromDatabase(ctx)
 }, pgxkit.WithMaxRetries(3))
 ```
@@ -208,6 +210,10 @@ if pgxkit.IsRetryableError(err) {
     // Connection errors, deadlocks, serialization failures, etc.
 }
 ```
+
+**Retried:** Network timeouts, dial/read/write failures, PostgreSQL connection errors (`08000`, `08003`, `08006`), server shutdown (`57P01`, `57P02`, `57P03`), serialization failures (`40001`), deadlocks (`40P01`).
+
+**Not retried:** Context cancellation, `pgx.ErrNoRows`, `pgx.ErrTxClosed`, constraint violations, syntax errors, and all other PostgreSQL errors.
 
 ## Health Checks
 

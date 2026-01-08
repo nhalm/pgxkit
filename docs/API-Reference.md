@@ -366,6 +366,25 @@ func WithMaxDelay(d time.Duration) RetryOption    // Maximum delay (default: 1s)
 func WithBackoffMultiplier(m float64) RetryOption // Backoff multiplier (default: 2.0)
 ```
 
+### Retryable Errors
+
+The retry logic only retries specific transient errors that may succeed on subsequent attempts:
+
+**Retried:**
+- Network timeouts (`net.Error` with `Timeout() == true`)
+- Network operation errors: dial, read, write failures (`net.OpError`)
+- PostgreSQL connection errors: `08000`, `08003`, `08006`
+- PostgreSQL server errors: `57P01` (admin_shutdown), `57P02` (crash_shutdown), `57P03` (cannot_connect_now)
+- PostgreSQL concurrency errors: `40001` (serialization_failure), `40P01` (deadlock_detected)
+
+**Not Retried (return immediately):**
+- Context cancellation or deadline exceeded
+- `pgx.ErrNoRows`
+- `pgx.ErrTxClosed`, `pgx.ErrTxCommitRollback`
+- Constraint violations (unique, foreign key, not null)
+- Syntax errors, invalid queries
+- Any other PostgreSQL errors
+
 ### RetryOperation
 
 ```go
@@ -408,19 +427,27 @@ err = pgxkit.RetryOperation(ctx, func(ctx context.Context) error {
 }, pgxkit.WithMaxRetries(3))
 ```
 
-### WithTimeout
+### Retry
 
 ```go
-func WithTimeout[T any](ctx context.Context, timeout time.Duration, fn func(context.Context) (T, error)) (T, error)
+func Retry[T any](ctx context.Context, fn func(context.Context) (T, error), opts ...RetryOption) (T, error)
 ```
 
-Generic utility function that executes a function with a timeout.
+Generic retry function that retries an operation returning a value and error, using exponential backoff. Only retryable errors (connection issues, deadlocks, serialization failures) trigger retries.
 
 **Example:**
 ```go
-result, err := pgxkit.WithTimeout(ctx, 5*time.Second, func(ctx context.Context) (*User, error) {
+// Basic retry returning a value
+user, err := pgxkit.Retry(ctx, func(ctx context.Context) (*User, error) {
     return getUserFromDatabase(ctx)
 })
+
+// Retry with timeout using context.WithTimeout
+ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+defer cancel()
+user, err := pgxkit.Retry(ctx, func(ctx context.Context) (*User, error) {
+    return getUserFromDatabase(ctx)
+}, pgxkit.WithMaxRetries(3))
 ```
 
 ## Type Helpers

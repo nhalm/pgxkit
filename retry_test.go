@@ -3,6 +3,7 @@ package pgxkit
 import (
 	"context"
 	"errors"
+	"net"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -139,6 +140,19 @@ func TestRetryOptionComposition(t *testing.T) {
 	}
 }
 
+func TestRetry_Success(t *testing.T) {
+	result, err := Retry(context.Background(), func(ctx context.Context) (string, error) {
+		return "success", nil
+	})
+
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+	if result != "success" {
+		t.Errorf("expected 'success', got '%s'", result)
+	}
+}
+
 func TestRetryOperation_SuccessNoRetry(t *testing.T) {
 	var callCount int32
 	err := RetryOperation(context.Background(), func(ctx context.Context) error {
@@ -159,7 +173,7 @@ func TestRetryOperation_FailsThenSucceeds(t *testing.T) {
 	err := RetryOperation(context.Background(), func(ctx context.Context) error {
 		count := atomic.AddInt32(&callCount, 1)
 		if count < 3 {
-			return errors.New("connection refused")
+			return &net.OpError{Op: "dial", Err: errors.New("connection refused")}
 		}
 		return nil
 	}, WithMaxRetries(5), WithBaseDelay(1*time.Millisecond))
@@ -177,7 +191,7 @@ func TestRetryOperation_FailsAllAttempts(t *testing.T) {
 	maxRetries := 3
 	err := RetryOperation(context.Background(), func(ctx context.Context) error {
 		atomic.AddInt32(&callCount, 1)
-		return errors.New("connection refused")
+		return &net.OpError{Op: "dial", Err: errors.New("connection refused")}
 	}, WithMaxRetries(maxRetries), WithBaseDelay(1*time.Millisecond))
 
 	if err == nil {
@@ -213,7 +227,7 @@ func TestRetryOperation_MaxRetriesRespected(t *testing.T) {
 			var callCount int32
 			_ = RetryOperation(context.Background(), func(ctx context.Context) error {
 				atomic.AddInt32(&callCount, 1)
-				return errors.New("connection refused")
+				return &net.OpError{Op: "dial", Err: errors.New("connection refused")}
 			}, WithMaxRetries(tt.maxRetries), WithBaseDelay(1*time.Millisecond))
 
 			if atomic.LoadInt32(&callCount) != tt.expectedCalls {
@@ -234,7 +248,7 @@ func TestRetryOperation_ContextCancellation(t *testing.T) {
 
 	err := RetryOperation(ctx, func(ctx context.Context) error {
 		atomic.AddInt32(&callCount, 1)
-		return errors.New("connection refused")
+		return &net.OpError{Op: "dial", Err: errors.New("connection refused")}
 	}, WithMaxRetries(100), WithBaseDelay(5*time.Millisecond))
 
 	if !errors.Is(err, context.Canceled) {
@@ -269,7 +283,7 @@ func TestRetryOperation_ExponentialBackoff(t *testing.T) {
 	_ = RetryOperation(context.Background(), func(ctx context.Context) error {
 		timestamps = append(timestamps, time.Now())
 		if len(timestamps) < 4 {
-			return errors.New("connection refused")
+			return &net.OpError{Op: "dial", Err: errors.New("connection refused")}
 		}
 		return nil
 	}, WithMaxRetries(5), WithBaseDelay(baseDelay), WithBackoffMultiplier(2.0))
@@ -298,7 +312,7 @@ func TestRetryOperation_MaxDelayRespected(t *testing.T) {
 	_ = RetryOperation(context.Background(), func(ctx context.Context) error {
 		timestamps = append(timestamps, time.Now())
 		if len(timestamps) < 6 {
-			return errors.New("connection refused")
+			return &net.OpError{Op: "dial", Err: errors.New("connection refused")}
 		}
 		return nil
 	}, WithMaxRetries(10), WithBaseDelay(baseDelay), WithMaxDelay(maxDelay), WithBackoffMultiplier(2.0))
@@ -413,41 +427,69 @@ func TestIsRetryableError_PgxSentinelErrors(t *testing.T) {
 	}
 }
 
-func TestIsRetryableError_NetworkErrorStrings(t *testing.T) {
-	retryableMessages := []string{
-		"connection refused",
-		"connection reset by peer",
-		"connection timeout occurred",
-		"network is unreachable",
-		"no route to host",
-		"dial tcp: connection refused",
-		"read tcp: connection reset by peer",
+type testNetError struct {
+	timeout   bool
+	temporary bool
+}
+
+func (e *testNetError) Error() string   { return "test network error" }
+func (e *testNetError) Timeout() bool   { return e.timeout }
+func (e *testNetError) Temporary() bool { return e.temporary }
+
+func TestIsRetryableError_NetworkErrors(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{
+			"net.Error interface",
+			&testNetError{timeout: true, temporary: true},
+			true,
+		},
+		{
+			"net.OpError dial",
+			&net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")},
+			true,
+		},
+		{
+			"net.OpError read",
+			&net.OpError{Op: "read", Net: "tcp", Err: errors.New("connection reset by peer")},
+			true,
+		},
+		{
+			"wrapped net.OpError",
+			errors.Join(errors.New("query failed"), &net.OpError{Op: "dial", Err: errors.New("no route to host")}),
+			true,
+		},
 	}
 
-	for _, msg := range retryableMessages {
-		t.Run(msg, func(t *testing.T) {
-			err := errors.New(msg)
-			if !IsRetryableError(err) {
-				t.Errorf("expected error '%s' to be retryable", msg)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsRetryableError(tt.err)
+			if result != tt.expected {
+				t.Errorf("expected %v, got %v", tt.expected, result)
 			}
 		})
 	}
 }
 
-func TestIsRetryableError_NonRetryableNetworkErrors(t *testing.T) {
-	nonRetryableMessages := []string{
-		"invalid query syntax",
-		"permission denied",
-		"authentication failed",
-		"unknown database",
-		"table does not exist",
+func TestIsRetryableError_NonRetryableErrors(t *testing.T) {
+	nonRetryableErrors := []struct {
+		name string
+		err  error
+	}{
+		{"invalid query syntax", errors.New("invalid query syntax")},
+		{"permission denied", errors.New("permission denied")},
+		{"authentication failed", errors.New("authentication failed")},
+		{"unknown database", errors.New("unknown database")},
+		{"table does not exist", errors.New("table does not exist")},
 	}
 
-	for _, msg := range nonRetryableMessages {
-		t.Run(msg, func(t *testing.T) {
-			err := errors.New(msg)
-			if IsRetryableError(err) {
-				t.Errorf("expected error '%s' to NOT be retryable", msg)
+	for _, tc := range nonRetryableErrors {
+		t.Run(tc.name, func(t *testing.T) {
+			if IsRetryableError(tc.err) {
+				t.Errorf("expected error '%s' to NOT be retryable", tc.err)
 			}
 		})
 	}
@@ -457,159 +499,6 @@ func TestIsRetryableError_UnknownError(t *testing.T) {
 	err := errors.New("some unknown error")
 	if IsRetryableError(err) {
 		t.Error("expected unknown error to return false")
-	}
-}
-
-func TestWithTimeoutAndRetry_Success(t *testing.T) {
-	result, err := WithTimeoutAndRetry(context.Background(), 1*time.Second, func(ctx context.Context) (string, error) {
-		return "success", nil
-	})
-
-	if err != nil {
-		t.Errorf("expected no error, got %v", err)
-	}
-	if result != "success" {
-		t.Errorf("expected 'success', got '%s'", result)
-	}
-}
-
-func TestWithTimeoutAndRetry_TimeoutNotRetryable(t *testing.T) {
-	var callCount int32
-	timeout := 20 * time.Millisecond
-
-	_, err := WithTimeoutAndRetry(context.Background(), timeout, func(ctx context.Context) (string, error) {
-		atomic.AddInt32(&callCount, 1)
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-time.After(50 * time.Millisecond):
-			return "success", nil
-		}
-	}, WithMaxRetries(2), WithBaseDelay(1*time.Millisecond))
-
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("expected context.DeadlineExceeded, got %v", err)
-	}
-
-	calls := atomic.LoadInt32(&callCount)
-	if calls != 1 {
-		t.Errorf("expected 1 call (timeout is not retryable by design), got %d", calls)
-	}
-}
-
-func TestWithTimeoutAndRetry_GenericTypeInt(t *testing.T) {
-	result, err := WithTimeoutAndRetry(context.Background(), 1*time.Second, func(ctx context.Context) (int, error) {
-		return 42, nil
-	})
-
-	if err != nil {
-		t.Errorf("expected no error, got %v", err)
-	}
-	if result != 42 {
-		t.Errorf("expected 42, got %d", result)
-	}
-}
-
-func TestWithTimeoutAndRetry_GenericTypeStruct(t *testing.T) {
-	type User struct {
-		ID   int
-		Name string
-	}
-
-	result, err := WithTimeoutAndRetry(context.Background(), 1*time.Second, func(ctx context.Context) (User, error) {
-		return User{ID: 1, Name: "Alice"}, nil
-	})
-
-	if err != nil {
-		t.Errorf("expected no error, got %v", err)
-	}
-	if result.ID != 1 || result.Name != "Alice" {
-		t.Errorf("expected {1, Alice}, got %+v", result)
-	}
-}
-
-func TestWithTimeoutAndRetry_GenericTypePointer(t *testing.T) {
-	type User struct {
-		ID   int
-		Name string
-	}
-
-	result, err := WithTimeoutAndRetry(context.Background(), 1*time.Second, func(ctx context.Context) (*User, error) {
-		return &User{ID: 1, Name: "Bob"}, nil
-	})
-
-	if err != nil {
-		t.Errorf("expected no error, got %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	if result.ID != 1 || result.Name != "Bob" {
-		t.Errorf("expected {1, Bob}, got %+v", result)
-	}
-}
-
-func TestWithTimeoutAndRetry_FailsThenSucceeds(t *testing.T) {
-	var callCount int32
-
-	result, err := WithTimeoutAndRetry(context.Background(), 1*time.Second, func(ctx context.Context) (string, error) {
-		count := atomic.AddInt32(&callCount, 1)
-		if count < 3 {
-			return "", errors.New("connection refused")
-		}
-		return "finally success", nil
-	}, WithMaxRetries(5), WithBaseDelay(1*time.Millisecond))
-
-	if err != nil {
-		t.Errorf("expected no error, got %v", err)
-	}
-	if result != "finally success" {
-		t.Errorf("expected 'finally success', got '%s'", result)
-	}
-	if atomic.LoadInt32(&callCount) != 3 {
-		t.Errorf("expected 3 calls, got %d", callCount)
-	}
-}
-
-func TestWithTimeoutAndRetry_OptionsApplied(t *testing.T) {
-	var callCount int32
-
-	_, _ = WithTimeoutAndRetry(context.Background(), 1*time.Second, func(ctx context.Context) (string, error) {
-		atomic.AddInt32(&callCount, 1)
-		return "", errors.New("connection refused")
-	}, WithMaxRetries(7), WithBaseDelay(1*time.Millisecond))
-
-	expectedCalls := int32(8)
-	if atomic.LoadInt32(&callCount) != expectedCalls {
-		t.Errorf("expected %d calls with maxRetries=7, got %d", expectedCalls, callCount)
-	}
-}
-
-func TestWithTimeout_Success(t *testing.T) {
-	result, err := WithTimeout(context.Background(), 1*time.Second, func(ctx context.Context) (string, error) {
-		return "done", nil
-	})
-
-	if err != nil {
-		t.Errorf("expected no error, got %v", err)
-	}
-	if result != "done" {
-		t.Errorf("expected 'done', got '%s'", result)
-	}
-}
-
-func TestWithTimeout_ExceedsTimeout(t *testing.T) {
-	_, err := WithTimeout(context.Background(), 10*time.Millisecond, func(ctx context.Context) (string, error) {
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-time.After(100 * time.Millisecond):
-			return "success", nil
-		}
-	})
-
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("expected context.DeadlineExceeded, got %v", err)
 	}
 }
 
@@ -656,32 +545,6 @@ func TestIsRetryableError_WrappedPgxErrors(t *testing.T) {
 				t.Errorf("expected %v, got %v", tt.expected, result)
 			}
 		})
-	}
-}
-
-func TestWithTimeoutAndRetry_GenericTypeSlice(t *testing.T) {
-	result, err := WithTimeoutAndRetry(context.Background(), 1*time.Second, func(ctx context.Context) ([]int, error) {
-		return []int{1, 2, 3}, nil
-	})
-
-	if err != nil {
-		t.Errorf("expected no error, got %v", err)
-	}
-	if len(result) != 3 || result[0] != 1 || result[1] != 2 || result[2] != 3 {
-		t.Errorf("expected [1, 2, 3], got %v", result)
-	}
-}
-
-func TestWithTimeout_GenericTypeMap(t *testing.T) {
-	result, err := WithTimeout(context.Background(), 1*time.Second, func(ctx context.Context) (map[string]int, error) {
-		return map[string]int{"a": 1, "b": 2}, nil
-	})
-
-	if err != nil {
-		t.Errorf("expected no error, got %v", err)
-	}
-	if result["a"] != 1 || result["b"] != 2 {
-		t.Errorf("expected map[a:1 b:2], got %v", result)
 	}
 }
 

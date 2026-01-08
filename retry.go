@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
+	"net"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -66,41 +66,50 @@ func WithBackoffMultiplier(m float64) RetryOption {
 	}
 }
 
-// WithTimeout executes a function with a timeout.
-// This is a generic utility function that can be used with any operation.
-//
-// Example:
-//
-//	result, err := pgxkit.WithTimeout(ctx, 5*time.Second, func(ctx context.Context) (*User, error) {
-//	    return getUserFromDatabase(ctx)
-//	})
-func WithTimeout[T any](ctx context.Context, timeout time.Duration, fn func(context.Context) (T, error)) (T, error) {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+// Retry executes a generic operation with configurable retry logic.
+// It uses exponential backoff to avoid thundering herd problems.
+func Retry[T any](ctx context.Context, fn func(context.Context) (T, error), opts ...RetryOption) (T, error) {
+	cfg := defaultRetryConfig()
+	for _, opt := range opts {
+		opt(cfg)
+	}
 
-	return fn(ctx)
-}
+	var zero T
+	var lastErr error
+	delay := cfg.baseDelay
 
-// WithTimeoutAndRetry executes a function with timeout and retry logic.
-// This combines timeout handling with intelligent retry logic for transient failures.
-//
-// Example:
-//
-//	result, err := pgxkit.WithTimeoutAndRetry(ctx, 5*time.Second, func(ctx context.Context) (*User, error) {
-//	    return getUserFromDatabase(ctx)
-//	}, pgxkit.WithMaxRetries(5), pgxkit.WithBaseDelay(200*time.Millisecond))
-func WithTimeoutAndRetry[T any](ctx context.Context, timeout time.Duration, fn func(context.Context) (T, error), opts ...RetryOption) (T, error) {
-	var result T
-	err := RetryOperation(ctx, func(ctx context.Context) error {
-		ctx, cancel := context.WithTimeout(ctx, timeout)
-		defer cancel()
+	for attempt := 0; attempt <= cfg.maxRetries; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return zero, err
+		}
 
-		var err error
-		result, err = fn(ctx)
-		return err
-	}, opts...)
+		if attempt > 0 {
+			if delay > cfg.maxDelay {
+				delay = cfg.maxDelay
+			}
 
-	return result, err
+			select {
+			case <-ctx.Done():
+				return zero, ctx.Err()
+			case <-time.After(delay):
+			}
+
+			delay = time.Duration(float64(delay) * cfg.multiplier)
+		}
+
+		result, err := fn(ctx)
+		if err == nil {
+			return result, nil
+		}
+
+		lastErr = err
+
+		if !IsRetryableError(err) {
+			return zero, err
+		}
+	}
+
+	return zero, fmt.Errorf("operation failed after %d attempts, last error: %w", cfg.maxRetries+1, lastErr)
 }
 
 // RetryOperation executes an operation with configurable retry logic.
@@ -112,46 +121,10 @@ func WithTimeoutAndRetry[T any](ctx context.Context, timeout time.Duration, fn f
 //	    return doSomething(ctx)
 //	}, pgxkit.WithMaxRetries(5), pgxkit.WithMaxDelay(5*time.Second))
 func RetryOperation(ctx context.Context, operation func(context.Context) error, opts ...RetryOption) error {
-	cfg := defaultRetryConfig()
-	for _, opt := range opts {
-		opt(cfg)
-	}
-
-	var lastErr error
-	delay := cfg.baseDelay
-
-	for attempt := 0; attempt <= cfg.maxRetries; attempt++ {
-		if attempt > 0 {
-			if delay > cfg.maxDelay {
-				delay = cfg.maxDelay
-			}
-
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(delay):
-			}
-
-			delay = time.Duration(float64(delay) * cfg.multiplier)
-		}
-
-		err := operation(ctx)
-		if err == nil {
-			return nil
-		}
-
-		lastErr = err
-
-		if !IsRetryableError(err) {
-			return err
-		}
-
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-	}
-
-	return fmt.Errorf("operation failed after %d attempts, last error: %w", cfg.maxRetries+1, lastErr)
+	_, err := Retry(ctx, func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, operation(ctx)
+	}, opts...)
+	return err
 }
 
 // IsRetryableError determines if an error is worth retrying
@@ -189,13 +162,19 @@ func IsRetryableError(err error) bool {
 		return false
 	}
 
-	errStr := err.Error()
-	if strings.Contains(errStr, "connection refused") ||
-		strings.Contains(errStr, "connection reset") ||
-		strings.Contains(errStr, "connection timeout") ||
-		strings.Contains(errStr, "network is unreachable") ||
-		strings.Contains(errStr, "no route to host") {
-		return true
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		if netErr.Timeout() {
+			return true
+		}
+	}
+
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		switch opErr.Op {
+		case "dial", "read", "write":
+			return true
+		}
 	}
 
 	return false
