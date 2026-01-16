@@ -565,8 +565,8 @@ func TestTxCommitHookErrorPropagation(t *testing.T) {
 	ctx := context.Background()
 	err := tx.Commit(ctx)
 
-	if err != hookErr {
-		t.Errorf("Commit should return hook error when commit succeeds but hook fails: got %v, want %v", err, hookErr)
+	if !errors.Is(err, hookErr) {
+		t.Errorf("Commit should return wrapped hook error: got %v, want error wrapping %v", err, hookErr)
 	}
 }
 
