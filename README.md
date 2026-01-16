@@ -26,6 +26,7 @@ pgxkit is a **tool-agnostic** PostgreSQL toolkit that works with any approach to
 - 🔧 **Type Helpers** - Seamless pgx type conversions
 - 📊 **Health Checks** - Built-in database connectivity monitoring
 - 🛡️ **Graceful Shutdown** - Production-ready lifecycle management
+- 🔀 **Executor Interface** - Write functions that work with both `*DB` and `*Tx`
 
 ## Installation
 
