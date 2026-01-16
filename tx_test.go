@@ -544,3 +544,28 @@ func TestTxDeferRollbackWithExplicitCommit(t *testing.T) {
 		t.Error("Transaction should be finalized")
 	}
 }
+
+func TestTxCommitHookErrorPropagation(t *testing.T) {
+	db := NewDB()
+	hookErr := errors.New("hook failed")
+
+	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		return hookErr
+	})
+
+	mock := &mockTx{
+		commitFunc: func(ctx context.Context) error {
+			return nil
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	ctx := context.Background()
+	err := tx.Commit(ctx)
+
+	if err != hookErr {
+		t.Errorf("Commit should return hook error when commit succeeds but hook fails: got %v, want %v", err, hookErr)
+	}
+}
