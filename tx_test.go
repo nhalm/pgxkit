@@ -113,3 +113,51 @@ func TestTxQueryError(t *testing.T) {
 		t.Errorf("Query should return underlying error: got %v, want %v", err, expectedErr)
 	}
 }
+
+type mockRow struct {
+	scanFunc func(dest ...interface{}) error
+}
+
+func (m *mockRow) Scan(dest ...interface{}) error {
+	if m.scanFunc != nil {
+		return m.scanFunc(dest...)
+	}
+	return nil
+}
+
+func TestTxQueryRow(t *testing.T) {
+	db := NewDB()
+
+	queryRowCalled := false
+	var capturedSQL string
+	var capturedArgs []interface{}
+
+	expectedRow := &mockRow{}
+	mock := &mockTx{
+		queryRowFunc: func(ctx context.Context, sql string, args ...interface{}) pgx.Row {
+			queryRowCalled = true
+			capturedSQL = sql
+			capturedArgs = args
+			return expectedRow
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	ctx := context.Background()
+	row := tx.QueryRow(ctx, "SELECT name FROM users WHERE id = $1", 123)
+
+	if !queryRowCalled {
+		t.Error("QueryRow should have called underlying pgx.Tx.QueryRow")
+	}
+	if capturedSQL != "SELECT name FROM users WHERE id = $1" {
+		t.Errorf("QueryRow passed wrong SQL: got %q", capturedSQL)
+	}
+	if len(capturedArgs) != 1 || capturedArgs[0] != 123 {
+		t.Errorf("QueryRow passed wrong args: got %v", capturedArgs)
+	}
+	if row != expectedRow {
+		t.Error("QueryRow should return the row from underlying pgx.Tx")
+	}
+}
