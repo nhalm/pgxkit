@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Tx wraps a pgx.Tx to implement the Executor interface and provide
@@ -25,4 +26,10 @@ func (t *Tx) Query(ctx context.Context, sql string, args ...interface{}) (pgx.Ro
 // Unlike DB.QueryRow, this does not fire BeforeOperation/AfterOperation hooks.
 func (t *Tx) QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row {
 	return t.tx.QueryRow(ctx, sql, args...)
+}
+
+// Exec executes a statement within the transaction.
+// Unlike DB.Exec, this does not fire BeforeOperation/AfterOperation hooks.
+func (t *Tx) Exec(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error) {
+	return t.tx.Exec(ctx, sql, args...)
 }
