@@ -107,3 +107,48 @@ func TestTransactionCommitFlow(t *testing.T) {
 		t.Errorf("Expected 'test_value', got '%s'", value)
 	}
 }
+
+func TestTransactionRollbackOnError(t *testing.T) {
+	pool := requireTestPool(t)
+	ctx := context.Background()
+
+	db := NewDB()
+	db.readPool = pool
+	db.writePool = pool
+
+	_, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS tx_test_rollback (id SERIAL PRIMARY KEY, value TEXT NOT NULL)`)
+	if err != nil {
+		t.Fatalf("Failed to create test table: %v", err)
+	}
+	defer CleanupTestData("DROP TABLE IF EXISTS tx_test_rollback")
+
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("BeginTx failed: %v", err)
+	}
+	defer tx.Rollback(ctx)
+
+	_, err = tx.Exec(ctx, `INSERT INTO tx_test_rollback (value) VALUES ($1)`, "before_error")
+	if err != nil {
+		t.Fatalf("First insert failed: %v", err)
+	}
+
+	_, err = tx.Exec(ctx, `INSERT INTO tx_test_rollback (value) VALUES ($1)`, nil)
+	if err == nil {
+		t.Fatal("Expected error on NULL insert into NOT NULL column")
+	}
+
+	err = tx.Rollback(ctx)
+	if err != nil {
+		t.Fatalf("Rollback failed: %v", err)
+	}
+
+	var count int
+	err = pool.QueryRow(ctx, `SELECT COUNT(*) FROM tx_test_rollback`).Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to count rows: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("Expected 0 rows after rollback, got %d", count)
+	}
+}
