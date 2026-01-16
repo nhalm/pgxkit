@@ -361,3 +361,150 @@ func TestTxCommitFinalizationPreventsDoubleCommit(t *testing.T) {
 		t.Errorf("Underlying commit should only be called once, got %d calls", commitCount)
 	}
 }
+
+func TestTxRollback(t *testing.T) {
+	db := NewDB()
+
+	rollbackCalled := false
+	mock := &mockTx{
+		rollbackFunc: func(ctx context.Context) error {
+			rollbackCalled = true
+			return nil
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	ctx := context.Background()
+	err := tx.Rollback(ctx)
+	if err != nil {
+		t.Errorf("Rollback returned unexpected error: %v", err)
+	}
+
+	if !rollbackCalled {
+		t.Error("Rollback should have called underlying pgx.Tx.Rollback")
+	}
+
+	if !tx.finalized.Load() {
+		t.Error("Rollback should set finalized to true")
+	}
+}
+
+func TestTxRollbackError(t *testing.T) {
+	db := NewDB()
+	expectedErr := errors.New("rollback failed")
+
+	mock := &mockTx{
+		rollbackFunc: func(ctx context.Context) error {
+			return expectedErr
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	ctx := context.Background()
+	err := tx.Rollback(ctx)
+	if err != expectedErr {
+		t.Errorf("Rollback should return underlying error: got %v, want %v", err, expectedErr)
+	}
+}
+
+func TestTxRollbackHookExecution(t *testing.T) {
+	db := NewDB()
+
+	hookCalled := false
+	var hookErr error
+	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		hookCalled = true
+		hookErr = operationErr
+		return nil
+	})
+
+	mock := &mockTx{
+		rollbackFunc: func(ctx context.Context) error {
+			return nil
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	ctx := context.Background()
+	err := tx.Rollback(ctx)
+	if err != nil {
+		t.Errorf("Rollback returned unexpected error: %v", err)
+	}
+
+	if !hookCalled {
+		t.Error("AfterTransaction hook should have been called")
+	}
+
+	if hookErr != nil {
+		t.Errorf("AfterTransaction hook should receive nil error on success, got %v", hookErr)
+	}
+}
+
+func TestTxRollbackHookReceivesError(t *testing.T) {
+	db := NewDB()
+	expectedErr := errors.New("rollback failed")
+
+	hookCalled := false
+	var hookErr error
+	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		hookCalled = true
+		hookErr = operationErr
+		return nil
+	})
+
+	mock := &mockTx{
+		rollbackFunc: func(ctx context.Context) error {
+			return expectedErr
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	ctx := context.Background()
+	_ = tx.Rollback(ctx)
+
+	if !hookCalled {
+		t.Error("AfterTransaction hook should have been called even on error")
+	}
+
+	if hookErr != expectedErr {
+		t.Errorf("AfterTransaction hook should receive rollback error: got %v, want %v", hookErr, expectedErr)
+	}
+}
+
+func TestTxDoubleRollbackSafety(t *testing.T) {
+	db := NewDB()
+
+	rollbackCount := 0
+	mock := &mockTx{
+		rollbackFunc: func(ctx context.Context) error {
+			rollbackCount++
+			return nil
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	ctx := context.Background()
+	err1 := tx.Rollback(ctx)
+	err2 := tx.Rollback(ctx)
+
+	if err1 != nil {
+		t.Errorf("First rollback returned unexpected error: %v", err1)
+	}
+	if err2 != nil {
+		t.Errorf("Second rollback should return nil (no-op), got: %v", err2)
+	}
+
+	if rollbackCount != 1 {
+		t.Errorf("Underlying rollback should only be called once, got %d calls", rollbackCount)
+	}
+}
