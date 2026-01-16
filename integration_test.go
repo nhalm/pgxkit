@@ -3,6 +3,8 @@ package pgxkit
 import (
 	"context"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func TestRequireTestPool(t *testing.T) {
@@ -63,5 +65,45 @@ func TestPoolHealthCheck(t *testing.T) {
 	stats := pool.Stat()
 	if stats == nil {
 		t.Error("Expected pool stats to be available")
+	}
+}
+
+func TestTransactionCommitFlow(t *testing.T) {
+	pool := requireTestPool(t)
+	ctx := context.Background()
+
+	db := NewDB()
+	db.readPool = pool
+	db.writePool = pool
+
+	_, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS tx_test_commit (id SERIAL PRIMARY KEY, value TEXT)`)
+	if err != nil {
+		t.Fatalf("Failed to create test table: %v", err)
+	}
+	defer CleanupTestData("DROP TABLE IF EXISTS tx_test_commit")
+
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("BeginTx failed: %v", err)
+	}
+
+	_, err = tx.Exec(ctx, `INSERT INTO tx_test_commit (value) VALUES ($1)`, "test_value")
+	if err != nil {
+		tx.Rollback(ctx)
+		t.Fatalf("Insert in transaction failed: %v", err)
+	}
+
+	err = tx.Commit(ctx)
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	var value string
+	err = pool.QueryRow(ctx, `SELECT value FROM tx_test_commit WHERE value = $1`, "test_value").Scan(&value)
+	if err != nil {
+		t.Fatalf("Failed to verify committed data: %v", err)
+	}
+	if value != "test_value" {
+		t.Errorf("Expected 'test_value', got '%s'", value)
 	}
 }
