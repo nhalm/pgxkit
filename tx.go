@@ -8,6 +8,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+var _ Executor = (*Tx)(nil)
+
 // Tx wraps a pgx.Tx to implement the Executor interface and provide
 // transaction lifecycle management integrated with pgxkit's activeOps tracking.
 type Tx struct {
