@@ -33,3 +33,18 @@ func (t *Tx) QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.
 func (t *Tx) Exec(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error) {
 	return t.tx.Exec(ctx, sql, args...)
 }
+
+// Commit commits the transaction.
+// It fires the AfterTransaction hook and uses atomic finalization to ensure
+// activeOps.Done() is called exactly once, making it safe for the
+// "defer Rollback() + explicit Commit()" pattern.
+func (t *Tx) Commit(ctx context.Context) error {
+	if !t.finalized.CompareAndSwap(false, true) {
+		return nil
+	}
+	defer t.db.activeOps.Done()
+
+	err := t.tx.Commit(ctx)
+	t.db.hooks.executeAfterTransaction(ctx, "", nil, err)
+	return err
+}
