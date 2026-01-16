@@ -64,6 +64,8 @@ type Executor interface {
 	Exec(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error)
 }
 
+var _ Executor = (*DB)(nil)
+
 func getEnvWithDefault(key, def string) string {
 	val := os.Getenv(key)
 	if val == "" {
