@@ -221,3 +221,143 @@ func TestTxExecError(t *testing.T) {
 		t.Errorf("Exec should return underlying error: got %v, want %v", err, expectedErr)
 	}
 }
+
+func TestTxCommit(t *testing.T) {
+	db := NewDB()
+
+	commitCalled := false
+	mock := &mockTx{
+		commitFunc: func(ctx context.Context) error {
+			commitCalled = true
+			return nil
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	ctx := context.Background()
+	err := tx.Commit(ctx)
+	if err != nil {
+		t.Errorf("Commit returned unexpected error: %v", err)
+	}
+
+	if !commitCalled {
+		t.Error("Commit should have called underlying pgx.Tx.Commit")
+	}
+
+	if !tx.finalized.Load() {
+		t.Error("Commit should set finalized to true")
+	}
+}
+
+func TestTxCommitError(t *testing.T) {
+	db := NewDB()
+	expectedErr := errors.New("commit failed")
+
+	mock := &mockTx{
+		commitFunc: func(ctx context.Context) error {
+			return expectedErr
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	ctx := context.Background()
+	err := tx.Commit(ctx)
+	if err != expectedErr {
+		t.Errorf("Commit should return underlying error: got %v, want %v", err, expectedErr)
+	}
+}
+
+func TestTxCommitHookExecution(t *testing.T) {
+	db := NewDB()
+
+	hookCalled := false
+	var hookErr error
+	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		hookCalled = true
+		hookErr = operationErr
+		return nil
+	})
+
+	mock := &mockTx{
+		commitFunc: func(ctx context.Context) error {
+			return nil
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	ctx := context.Background()
+	err := tx.Commit(ctx)
+	if err != nil {
+		t.Errorf("Commit returned unexpected error: %v", err)
+	}
+
+	if !hookCalled {
+		t.Error("AfterTransaction hook should have been called")
+	}
+
+	if hookErr != nil {
+		t.Errorf("AfterTransaction hook should receive nil error on success, got %v", hookErr)
+	}
+}
+
+func TestTxCommitHookReceivesError(t *testing.T) {
+	db := NewDB()
+	expectedErr := errors.New("commit failed")
+
+	hookCalled := false
+	var hookErr error
+	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		hookCalled = true
+		hookErr = operationErr
+		return nil
+	})
+
+	mock := &mockTx{
+		commitFunc: func(ctx context.Context) error {
+			return expectedErr
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	ctx := context.Background()
+	_ = tx.Commit(ctx)
+
+	if !hookCalled {
+		t.Error("AfterTransaction hook should have been called even on error")
+	}
+
+	if hookErr != expectedErr {
+		t.Errorf("AfterTransaction hook should receive commit error: got %v, want %v", hookErr, expectedErr)
+	}
+}
+
+func TestTxCommitFinalizationPreventsDoubleCommit(t *testing.T) {
+	db := NewDB()
+
+	commitCount := 0
+	mock := &mockTx{
+		commitFunc: func(ctx context.Context) error {
+			commitCount++
+			return nil
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	ctx := context.Background()
+	_ = tx.Commit(ctx)
+	_ = tx.Commit(ctx)
+
+	if commitCount != 1 {
+		t.Errorf("Underlying commit should only be called once, got %d calls", commitCount)
+	}
+}
