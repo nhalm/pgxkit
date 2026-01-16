@@ -508,3 +508,39 @@ func TestTxDoubleRollbackSafety(t *testing.T) {
 		t.Errorf("Underlying rollback should only be called once, got %d calls", rollbackCount)
 	}
 }
+
+func TestTxDeferRollbackWithExplicitCommit(t *testing.T) {
+	db := NewDB()
+
+	commitCalled := false
+	rollbackCalled := false
+	mock := &mockTx{
+		commitFunc: func(ctx context.Context) error {
+			commitCalled = true
+			return nil
+		},
+		rollbackFunc: func(ctx context.Context) error {
+			rollbackCalled = true
+			return nil
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	ctx := context.Background()
+	func() {
+		defer tx.Rollback(ctx)
+		_ = tx.Commit(ctx)
+	}()
+
+	if !commitCalled {
+		t.Error("Commit should have been called")
+	}
+	if rollbackCalled {
+		t.Error("Rollback should not have been called after Commit")
+	}
+	if !tx.finalized.Load() {
+		t.Error("Transaction should be finalized")
+	}
+}
