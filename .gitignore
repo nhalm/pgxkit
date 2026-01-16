@@ -46,3 +46,11 @@ go.sum.backup
 .Trashes
 ehthumbs.db
 Thumbs.dbPRD.md
+
+PRD.json
+PROGRESS.md
+PROMPT.md
+RALPH_STATUS.json
+TASKS.md
+ralph.log
+archive/

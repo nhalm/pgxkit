@@ -56,6 +56,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// Executor is a unified interface for database operations that both *DB and *Tx implement.
+// This allows passing a single interface for database operations whether in a transaction or not.
+type Executor interface {
+	Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row
+	Exec(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error)
+}
+
 func getEnvWithDefault(key, def string) string {
 	val := os.Getenv(key)
 	if val == "" {
