@@ -213,3 +213,62 @@ func TestGracefulShutdownWaitsForTransaction(t *testing.T) {
 		t.Errorf("Expected 'during_shutdown', got '%s'", value)
 	}
 }
+
+func TestTxEscapeHatch(t *testing.T) {
+	pool := requireTestPool(t)
+	ctx := context.Background()
+
+	db := NewDB()
+	db.readPool = pool
+	db.writePool = pool
+
+	_, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS tx_test_escape_hatch (id SERIAL PRIMARY KEY, value TEXT)`)
+	if err != nil {
+		t.Fatalf("Failed to create test table: %v", err)
+	}
+	defer CleanupTestData("DROP TABLE IF EXISTS tx_test_escape_hatch")
+
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("BeginTx failed: %v", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Get the underlying pgx.Tx via escape hatch
+	rawTx := tx.Tx()
+	if rawTx == nil {
+		t.Fatal("Tx() returned nil")
+	}
+
+	// Execute query using the raw pgx.Tx
+	_, err = rawTx.Exec(ctx, `INSERT INTO tx_test_escape_hatch (value) VALUES ($1)`, "escape_hatch_value")
+	if err != nil {
+		t.Fatalf("Exec via raw pgx.Tx failed: %v", err)
+	}
+
+	// Query using the raw pgx.Tx
+	var value string
+	err = rawTx.QueryRow(ctx, `SELECT value FROM tx_test_escape_hatch WHERE value = $1`, "escape_hatch_value").Scan(&value)
+	if err != nil {
+		t.Fatalf("QueryRow via raw pgx.Tx failed: %v", err)
+	}
+	if value != "escape_hatch_value" {
+		t.Errorf("Expected 'escape_hatch_value', got '%s'", value)
+	}
+
+	// Commit using the wrapper to ensure proper cleanup
+	err = tx.Commit(ctx)
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	// Verify data was committed
+	var count int
+	err = pool.QueryRow(ctx, `SELECT COUNT(*) FROM tx_test_escape_hatch WHERE value = $1`, "escape_hatch_value").Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to verify committed data: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected 1 row, got %d", count)
+	}
+}
