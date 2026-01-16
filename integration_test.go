@@ -3,6 +3,7 @@ package pgxkit
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -150,5 +151,65 @@ func TestTransactionRollbackOnError(t *testing.T) {
 	}
 	if count != 0 {
 		t.Errorf("Expected 0 rows after rollback, got %d", count)
+	}
+}
+
+func TestGracefulShutdownWaitsForTransaction(t *testing.T) {
+	pool := requireTestPool(t)
+	ctx := context.Background()
+
+	db := NewDB()
+	db.readPool = pool
+	db.writePool = pool
+
+	_, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS tx_test_shutdown (id SERIAL PRIMARY KEY, value TEXT)`)
+	if err != nil {
+		t.Fatalf("Failed to create test table: %v", err)
+	}
+	defer CleanupTestData("DROP TABLE IF EXISTS tx_test_shutdown")
+
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("BeginTx failed: %v", err)
+	}
+
+	shutdownComplete := make(chan struct{})
+	go func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		db.Shutdown(shutdownCtx)
+		close(shutdownComplete)
+	}()
+
+	select {
+	case <-shutdownComplete:
+		t.Fatal("Shutdown completed before transaction finished")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	_, err = tx.Exec(ctx, `INSERT INTO tx_test_shutdown (value) VALUES ($1)`, "during_shutdown")
+	if err != nil {
+		tx.Rollback(ctx)
+		t.Fatalf("Insert during shutdown wait failed: %v", err)
+	}
+
+	err = tx.Commit(ctx)
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	select {
+	case <-shutdownComplete:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Shutdown did not complete after transaction finished")
+	}
+
+	var value string
+	err = pool.QueryRow(ctx, `SELECT value FROM tx_test_shutdown WHERE value = $1`, "during_shutdown").Scan(&value)
+	if err != nil {
+		t.Fatalf("Failed to verify committed data: %v", err)
+	}
+	if value != "during_shutdown" {
+		t.Errorf("Expected 'during_shutdown', got '%s'", value)
 	}
 }
