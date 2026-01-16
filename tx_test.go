@@ -590,7 +590,7 @@ func TestTxRollbackHookErrorPropagation(t *testing.T) {
 	ctx := context.Background()
 	err := tx.Rollback(ctx)
 
-	if err != hookErr {
-		t.Errorf("Rollback should return hook error when rollback succeeds but hook fails: got %v, want %v", err, hookErr)
+	if !errors.Is(err, hookErr) {
+		t.Errorf("Rollback should return wrapped hook error when rollback succeeds but hook fails: got %v, want error wrapping %v", err, hookErr)
 	}
 }
