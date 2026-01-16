@@ -49,7 +49,7 @@ func (t *Tx) Commit(ctx context.Context) error {
 
 	err := t.tx.Commit(ctx)
 	if hookErr := t.db.hooks.executeAfterTransaction(ctx, "", nil, err); hookErr != nil && err == nil {
-		return hookErr
+		return fmt.Errorf("after transaction hook failed: %w", hookErr)
 	}
 	return err
 }
