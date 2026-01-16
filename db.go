@@ -41,6 +41,42 @@
 //
 // The package follows a "safety first" design - all default methods use the write pool
 // for consistency, with explicit ReadQuery() methods available for read optimization.
+//
+// Transaction Usage:
+//
+// pgxkit provides a Tx type that wraps pgx.Tx and implements the Executor interface,
+// allowing you to write functions that work with both *DB and *Tx interchangeably.
+//
+//	func CreateUser(ctx context.Context, exec pgxkit.Executor, name string) (int, error) {
+//	    var id int
+//	    err := exec.QueryRow(ctx, "INSERT INTO users (name) VALUES ($1) RETURNING id", name).Scan(&id)
+//	    return id, err
+//	}
+//
+//	// Works with *DB
+//	id, err := CreateUser(ctx, db, "Alice")
+//
+//	// Works with *Tx
+//	tx, _ := db.BeginTx(ctx, pgx.TxOptions{})
+//	id, err := CreateUser(ctx, tx, "Bob")
+//
+// The recommended transaction pattern uses defer for safety:
+//
+//	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+//	if err != nil {
+//	    return err
+//	}
+//	defer tx.Rollback(ctx) // Safe no-op if already committed
+//
+//	_, err = tx.Exec(ctx, "INSERT INTO users (name) VALUES ($1)", "Alice")
+//	if err != nil {
+//	    return err
+//	}
+//
+//	return tx.Commit(ctx)
+//
+// Transactions are tracked by activeOps for graceful shutdown - Shutdown will wait
+// for active transactions to complete. The *Tx type is NOT goroutine-safe.
 package pgxkit
 
 import (
