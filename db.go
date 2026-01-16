@@ -543,7 +543,8 @@ func (db *DB) ReadQueryRow(ctx context.Context, sql string, args ...interface{})
 
 // BeginTx starts a transaction using the write pool.
 // Transactions always use the write pool to ensure consistency.
-// The transaction will execute BeforeTransaction and AfterTransaction hooks.
+// The transaction will execute BeforeTransaction hook on start
+// and AfterTransaction hook on Commit/Rollback.
 //
 // Example:
 //
@@ -558,7 +559,7 @@ func (db *DB) ReadQueryRow(ctx context.Context, sql string, args ...interface{})
 //	    return err
 //	}
 //	return tx.Commit(ctx)
-func (db *DB) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error) {
+func (db *DB) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (*Tx, error) {
 	db.mu.RLock()
 	if db.shutdown {
 		db.mu.RUnlock()
@@ -570,17 +571,13 @@ func (db *DB) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, err
 		return nil, fmt.Errorf("before transaction hook failed: %w", err)
 	}
 
-	tx, err := db.writePool.BeginTx(ctx, txOptions)
-
-	hookErr := db.hooks.executeAfterTransaction(ctx, "", nil, err)
-	if hookErr != nil && err == nil {
-		if tx != nil {
-			tx.Rollback(ctx)
-		}
-		return nil, fmt.Errorf("after transaction hook failed: %w", hookErr)
+	pgxTx, err := db.writePool.BeginTx(ctx, txOptions)
+	if err != nil {
+		return nil, err
 	}
 
-	return tx, err
+	db.activeOps.Add(1)
+	return &Tx{tx: pgxTx, db: db}, nil
 }
 
 // Shutdown gracefully shuts down the database connections.
