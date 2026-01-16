@@ -19,6 +19,35 @@ Complete API reference for pgxkit - the tool-agnostic PostgreSQL toolkit.
 
 ## Core Types
 
+### Executor
+
+```go
+type Executor interface {
+    Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error)
+    QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row
+    Exec(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error)
+}
+```
+
+A unified interface for database operations that both `*DB` and `*Tx` implement. This allows writing functions that work with both regular database connections and transactions.
+
+**Example:**
+```go
+// Function that works with both *DB and *Tx
+func CreateUser(ctx context.Context, exec pgxkit.Executor, name string) (int, error) {
+    var id int
+    err := exec.QueryRow(ctx, "INSERT INTO users (name) VALUES ($1) RETURNING id", name).Scan(&id)
+    return id, err
+}
+
+// Works with *DB
+id, err := CreateUser(ctx, db, "Alice")
+
+// Works with *Tx
+tx, _ := db.BeginTx(ctx, pgx.TxOptions{})
+id, err := CreateUser(ctx, tx, "Bob")
+```
+
 ### DB
 
 ```go
@@ -27,7 +56,7 @@ type DB struct {
 }
 ```
 
-The main database abstraction that provides read/write pool management, hooks, and graceful shutdown capabilities.
+The main database abstraction that provides read/write pool management, hooks, and graceful shutdown capabilities. Implements the `Executor` interface.
 
 **Key Features:**
 - Safe-by-default design (all operations use write pool unless explicitly using Read* methods)
@@ -35,6 +64,49 @@ The main database abstraction that provides read/write pool management, hooks, a
 - Extensible hook system
 - Graceful shutdown with operation tracking
 - Connection pool statistics
+
+### Tx
+
+```go
+type Tx struct {
+    // Internal fields - access through methods
+}
+```
+
+Wraps a pgx.Tx to implement the `Executor` interface and provide transaction lifecycle management integrated with pgxkit's activeOps tracking. The `*Tx` type is NOT goroutine-safe.
+
+**Methods:**
+
+| Method | Description |
+|--------|-------------|
+| `Query(ctx, sql, args...)` | Execute a query within the transaction |
+| `QueryRow(ctx, sql, args...)` | Execute a query returning a single row |
+| `Exec(ctx, sql, args...)` | Execute a statement within the transaction |
+| `Commit(ctx)` | Commit the transaction |
+| `Rollback(ctx)` | Rollback the transaction |
+| `Tx()` | Return the underlying pgx.Tx for advanced use cases |
+
+**Commit and Rollback:**
+- Fire the AfterTransaction hook
+- Use atomic finalization to ensure activeOps.Done() is called exactly once
+- Safe for the "defer Rollback() + explicit Commit()" pattern
+- Propagate AfterTransaction hook errors when the underlying operation succeeds
+
+**Example:**
+```go
+tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+if err != nil {
+    return err
+}
+defer tx.Rollback(ctx) // Safe no-op if already committed
+
+_, err = tx.Exec(ctx, "INSERT INTO users (name) VALUES ($1)", "Alice")
+if err != nil {
+    return err
+}
+
+return tx.Commit(ctx)
+```
 
 ## Database Connection
 
@@ -235,10 +307,15 @@ log.Printf("Inserted %d rows", tag.RowsAffected())
 ### BeginTx
 
 ```go
-func (db *DB) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error)
+func (db *DB) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (*Tx, error)
 ```
 
-Begins a new transaction using the write pool with the specified options.
+Begins a new transaction using the write pool with the specified options. Returns a `*Tx` that implements the `Executor` interface.
+
+The transaction:
+- Fires the BeforeTransaction hook on start
+- Fires the AfterTransaction hook on Commit/Rollback
+- Is tracked by activeOps for graceful shutdown
 
 **Example:**
 ```go
@@ -248,12 +325,65 @@ tx, err := db.BeginTx(ctx, pgx.TxOptions{
 if err != nil {
     return err
 }
-defer tx.Rollback(ctx)
+defer tx.Rollback(ctx) // Safe no-op if already committed
 
-// Use transaction...
+_, err = tx.Exec(ctx, "INSERT INTO users (name) VALUES ($1)", name)
+if err != nil {
+    return err
+}
 
-err = tx.Commit(ctx)
+return tx.Commit(ctx)
 ```
+
+### Tx Methods
+
+#### Query
+
+```go
+func (t *Tx) Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error)
+```
+
+Executes a query within the transaction. Unlike DB.Query, this does not fire BeforeOperation/AfterOperation hooks.
+
+#### QueryRow
+
+```go
+func (t *Tx) QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row
+```
+
+Executes a query that returns a single row within the transaction. Unlike DB.QueryRow, this does not fire BeforeOperation/AfterOperation hooks.
+
+#### Exec
+
+```go
+func (t *Tx) Exec(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error)
+```
+
+Executes a statement within the transaction. Unlike DB.Exec, this does not fire BeforeOperation/AfterOperation hooks.
+
+#### Commit
+
+```go
+func (t *Tx) Commit(ctx context.Context) error
+```
+
+Commits the transaction. Fires the AfterTransaction hook and propagates hook errors when the commit succeeds. Uses atomic finalization to ensure activeOps.Done() is called exactly once.
+
+#### Rollback
+
+```go
+func (t *Tx) Rollback(ctx context.Context) error
+```
+
+Rolls back the transaction. Fires the AfterTransaction hook and propagates hook errors when the rollback succeeds. Uses atomic finalization to ensure activeOps.Done() is called exactly once. Safe to call after Commit (returns nil).
+
+#### Tx
+
+```go
+func (t *Tx) Tx() pgx.Tx
+```
+
+Returns the underlying pgx.Tx for advanced use cases that require direct access to pgx transaction functionality.
 
 ## Hook System
 
