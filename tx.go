@@ -20,3 +20,9 @@ type Tx struct {
 func (t *Tx) Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error) {
 	return t.tx.Query(ctx, sql, args...)
 }
+
+// QueryRow executes a query that returns a single row within the transaction.
+// Unlike DB.QueryRow, this does not fire BeforeOperation/AfterOperation hooks.
+func (t *Tx) QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row {
+	return t.tx.QueryRow(ctx, sql, args...)
+}
