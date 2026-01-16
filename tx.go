@@ -2,6 +2,7 @@ package pgxkit
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 
 	"github.com/jackc/pgx/v5"
