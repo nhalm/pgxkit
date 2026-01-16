@@ -214,6 +214,83 @@ func TestGracefulShutdownWaitsForTransaction(t *testing.T) {
 	}
 }
 
+func TestActiveOpsTracking(t *testing.T) {
+	pool := requireTestPool(t)
+	ctx := context.Background()
+
+	t.Run("increments on BeginTx and decrements on Commit", func(t *testing.T) {
+		db := NewDB()
+		db.readPool = pool
+		db.writePool = pool
+
+		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			t.Fatalf("BeginTx failed: %v", err)
+		}
+
+		shutdownComplete := make(chan struct{})
+		go func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			db.Shutdown(shutdownCtx)
+			close(shutdownComplete)
+		}()
+
+		select {
+		case <-shutdownComplete:
+			t.Fatal("Shutdown completed before Commit - activeOps not incremented on BeginTx")
+		case <-time.After(100 * time.Millisecond):
+		}
+
+		err = tx.Commit(ctx)
+		if err != nil {
+			t.Fatalf("Commit failed: %v", err)
+		}
+
+		select {
+		case <-shutdownComplete:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Shutdown did not complete after Commit - activeOps not decremented")
+		}
+	})
+
+	t.Run("increments on BeginTx and decrements on Rollback", func(t *testing.T) {
+		db := NewDB()
+		db.readPool = pool
+		db.writePool = pool
+
+		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			t.Fatalf("BeginTx failed: %v", err)
+		}
+
+		shutdownComplete := make(chan struct{})
+		go func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			db.Shutdown(shutdownCtx)
+			close(shutdownComplete)
+		}()
+
+		select {
+		case <-shutdownComplete:
+			t.Fatal("Shutdown completed before Rollback - activeOps not incremented on BeginTx")
+		case <-time.After(100 * time.Millisecond):
+		}
+
+		err = tx.Rollback(ctx)
+		if err != nil {
+			t.Fatalf("Rollback failed: %v", err)
+		}
+
+		select {
+		case <-shutdownComplete:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Shutdown did not complete after Rollback - activeOps not decremented")
+		}
+	})
+}
+
 func TestTxEscapeHatch(t *testing.T) {
 	pool := requireTestPool(t)
 	ctx := context.Background()
