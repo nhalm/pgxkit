@@ -8,14 +8,15 @@ This document provides comprehensive examples of using pgxkit - the tool-agnosti
 
 1. [Basic Usage](#basic-usage)
 2. [Read/Write Split](#readwrite-split)
-3. [Hook System](#hook-system)
-4. [Retry Logic](#retry-logic)
-5. [Health Checks](#health-checks)
-6. [Testing](#testing)
-7. [Type Helpers](#type-helpers)
-8. [Metrics and Observability](#metrics-and-observability)
-9. [Production Patterns](#production-patterns)
-10. [Integration with Code Generation](#integration-with-code-generation)
+3. [Executor Interface](#executor-interface)
+4. [Hook System](#hook-system)
+5. [Retry Logic](#retry-logic)
+6. [Health Checks](#health-checks)
+7. [Testing](#testing)
+8. [Type Helpers](#type-helpers)
+9. [Metrics and Observability](#metrics-and-observability)
+10. [Production Patterns](#production-patterns)
+11. [Integration with Code Generation](#integration-with-code-generation)
 
 ## Basic Usage
 
@@ -128,6 +129,130 @@ func isReadQuery(sql string) bool {
     return strings.HasPrefix(sql, "SELECT") ||
            strings.HasPrefix(sql, "WITH") ||
            strings.HasPrefix(sql, "EXPLAIN")
+}
+```
+
+## Executor Interface
+
+### Writing Reusable Repository Functions
+
+The `Executor` interface allows you to write functions that work with both `*DB` and `*Tx`, making your code reusable across transactional and non-transactional contexts.
+
+```go
+// Repository function that accepts Executor interface
+func CreateUser(ctx context.Context, exec pgxkit.Executor, name, email string) (int64, error) {
+    var id int64
+    err := exec.QueryRow(ctx,
+        "INSERT INTO users (name, email) VALUES ($1, $2) RETURNING id",
+        name, email).Scan(&id)
+    return id, err
+}
+
+func UpdateUserEmail(ctx context.Context, exec pgxkit.Executor, id int64, email string) error {
+    _, err := exec.Exec(ctx,
+        "UPDATE users SET email = $1 WHERE id = $2",
+        email, id)
+    return err
+}
+
+func GetUser(ctx context.Context, exec pgxkit.Executor, id int64) (*User, error) {
+    var user User
+    err := exec.QueryRow(ctx,
+        "SELECT id, name, email FROM users WHERE id = $1",
+        id).Scan(&user.ID, &user.Name, &user.Email)
+    if err != nil {
+        return nil, err
+    }
+    return &user, nil
+}
+```
+
+### Using Repository Functions Without Transactions
+
+```go
+func main() {
+    ctx := context.Background()
+    db := pgxkit.NewDB()
+    err := db.Connect(ctx, "")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer db.Shutdown(ctx)
+
+    // Use repository functions directly with *DB
+    id, err := CreateUser(ctx, db, "Alice", "alice@example.com")
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    user, err := GetUser(ctx, db, id)
+    if err != nil {
+        log.Fatal(err)
+    }
+    log.Printf("Created user: %+v", user)
+}
+```
+
+### Using Repository Functions Within Transactions
+
+```go
+func TransferUserData(ctx context.Context, db *pgxkit.DB, fromID, toID int64) error {
+    tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+    if err != nil {
+        return err
+    }
+    defer tx.Rollback(ctx)
+
+    // Get source user using the same repository function
+    sourceUser, err := GetUser(ctx, tx, fromID)
+    if err != nil {
+        return fmt.Errorf("failed to get source user: %w", err)
+    }
+
+    // Update destination user using the same repository function
+    err = UpdateUserEmail(ctx, tx, toID, sourceUser.Email)
+    if err != nil {
+        return fmt.Errorf("failed to update destination user: %w", err)
+    }
+
+    return tx.Commit(ctx)
+}
+```
+
+### Service Layer Pattern
+
+```go
+type UserService struct {
+    db *pgxkit.DB
+}
+
+func (s *UserService) CreateUserWithProfile(ctx context.Context, name, email, bio string) (*User, error) {
+    tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+    if err != nil {
+        return nil, err
+    }
+    defer tx.Rollback(ctx)
+
+    // Create user
+    userID, err := CreateUser(ctx, tx, name, email)
+    if err != nil {
+        return nil, fmt.Errorf("failed to create user: %w", err)
+    }
+
+    // Create profile in same transaction
+    _, err = tx.Exec(ctx,
+        "INSERT INTO profiles (user_id, bio) VALUES ($1, $2)",
+        userID, bio)
+    if err != nil {
+        return nil, fmt.Errorf("failed to create profile: %w", err)
+    }
+
+    if err := tx.Commit(ctx); err != nil {
+        return nil, err
+    }
+
+    // Fetch and return the complete user
+    return GetUser(ctx, s.db, userID)
 }
 ```
 
