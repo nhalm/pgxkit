@@ -63,3 +63,9 @@ func (t *Tx) Rollback(ctx context.Context) error {
 	t.db.hooks.executeAfterTransaction(ctx, "", nil, err)
 	return err
 }
+
+// Tx returns the underlying pgx.Tx for advanced use cases
+// that require direct access to pgx transaction functionality.
+func (t *Tx) Tx() pgx.Tx {
+	return t.tx
+}
