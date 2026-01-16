@@ -161,3 +161,63 @@ func TestTxQueryRow(t *testing.T) {
 		t.Error("QueryRow should return the row from underlying pgx.Tx")
 	}
 }
+
+func TestTxExec(t *testing.T) {
+	db := NewDB()
+
+	execCalled := false
+	var capturedSQL string
+	var capturedArgs []interface{}
+
+	expectedTag := pgconn.NewCommandTag("UPDATE 1")
+	mock := &mockTx{
+		execFunc: func(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error) {
+			execCalled = true
+			capturedSQL = sql
+			capturedArgs = args
+			return expectedTag, nil
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	ctx := context.Background()
+	tag, err := tx.Exec(ctx, "UPDATE users SET name = $1 WHERE id = $2", "Alice", 42)
+	if err != nil {
+		t.Errorf("Exec returned unexpected error: %v", err)
+	}
+
+	if !execCalled {
+		t.Error("Exec should have called underlying pgx.Tx.Exec")
+	}
+	if capturedSQL != "UPDATE users SET name = $1 WHERE id = $2" {
+		t.Errorf("Exec passed wrong SQL: got %q", capturedSQL)
+	}
+	if len(capturedArgs) != 2 || capturedArgs[0] != "Alice" || capturedArgs[1] != 42 {
+		t.Errorf("Exec passed wrong args: got %v", capturedArgs)
+	}
+	if tag != expectedTag {
+		t.Errorf("Exec should return command tag from underlying pgx.Tx: got %v, want %v", tag, expectedTag)
+	}
+}
+
+func TestTxExecError(t *testing.T) {
+	db := NewDB()
+	expectedErr := errors.New("exec failed")
+
+	mock := &mockTx{
+		execFunc: func(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error) {
+			return pgconn.CommandTag{}, expectedErr
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	ctx := context.Background()
+	_, err := tx.Exec(ctx, "DELETE FROM users")
+	if err != expectedErr {
+		t.Errorf("Exec should return underlying error: got %v, want %v", err, expectedErr)
+	}
+}
