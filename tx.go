@@ -17,6 +17,13 @@ const (
 
 var ErrTxFinalized = errors.New("transaction already finalized")
 
+// finalizedRow implements pgx.Row for queries on finalized transactions.
+type finalizedRow struct{}
+
+func (f *finalizedRow) Scan(dest ...any) error {
+	return ErrTxFinalized
+}
+
 var _ Executor = (*Tx)(nil)
 
 // Tx wraps a pgx.Tx to implement the Executor interface and provide
