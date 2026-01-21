@@ -769,3 +769,24 @@ func TestTxExecAfterFinalization(t *testing.T) {
 		t.Errorf("Exec after Commit should return ErrTxFinalized: got %v", err)
 	}
 }
+
+func TestTxQueryAfterRollback(t *testing.T) {
+	db := NewDB()
+
+	mock := &mockTx{
+		rollbackFunc: func(ctx context.Context) error {
+			return nil
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	ctx := context.Background()
+	_ = tx.Rollback(ctx)
+
+	_, err := tx.Query(ctx, "SELECT 1")
+	if !errors.Is(err, ErrTxFinalized) {
+		t.Errorf("Query after Rollback should return ErrTxFinalized: got %v", err)
+	}
+}
