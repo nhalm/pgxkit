@@ -609,6 +609,7 @@ func (db *DB) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (*Tx, error)
 
 	pgxTx, err := db.writePool.BeginTx(ctx, txOptions)
 	if err != nil {
+		db.hooks.executeAfterTransaction(ctx, "", nil, err)
 		return nil, err
 	}
 
