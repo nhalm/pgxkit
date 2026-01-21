@@ -85,6 +85,7 @@ Wraps a pgx.Tx to implement the `Executor` interface and provide transaction lif
 | `Commit(ctx)` | Commit the transaction |
 | `Rollback(ctx)` | Rollback the transaction |
 | `Tx()` | Return the underlying pgx.Tx for advanced use cases |
+| `IsFinalized()` | Returns true if transaction has been committed or rolled back |
 
 **Commit and Rollback:**
 - Fire the AfterTransaction hook
