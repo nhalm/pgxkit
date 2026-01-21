@@ -834,3 +834,51 @@ func TestTxExecAfterRollback(t *testing.T) {
 		t.Errorf("Exec after Rollback should return ErrTxFinalized: got %v", err)
 	}
 }
+
+func TestTxIsFinalized(t *testing.T) {
+	db := NewDB()
+
+	mock := &mockTx{
+		commitFunc: func(ctx context.Context) error {
+			return nil
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	if tx.IsFinalized() {
+		t.Error("IsFinalized should return false before Commit")
+	}
+
+	ctx := context.Background()
+	_ = tx.Commit(ctx)
+
+	if !tx.IsFinalized() {
+		t.Error("IsFinalized should return true after Commit")
+	}
+}
+
+func TestTxIsFinalizedAfterRollback(t *testing.T) {
+	db := NewDB()
+
+	mock := &mockTx{
+		rollbackFunc: func(ctx context.Context) error {
+			return nil
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	if tx.IsFinalized() {
+		t.Error("IsFinalized should return false before Rollback")
+	}
+
+	ctx := context.Background()
+	_ = tx.Rollback(ctx)
+
+	if !tx.IsFinalized() {
+		t.Error("IsFinalized should return true after Rollback")
+	}
+}
