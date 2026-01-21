@@ -594,3 +594,29 @@ func TestTxRollbackHookErrorPropagation(t *testing.T) {
 		t.Errorf("Rollback should return wrapped hook error when rollback succeeds but hook fails: got %v, want error wrapping %v", err, hookErr)
 	}
 }
+
+func TestTxCommitHookReceivesOperationType(t *testing.T) {
+	db := NewDB()
+
+	var capturedSQL string
+	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		capturedSQL = sql
+		return nil
+	})
+
+	mock := &mockTx{
+		commitFunc: func(ctx context.Context) error {
+			return nil
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	ctx := context.Background()
+	_ = tx.Commit(ctx)
+
+	if capturedSQL != TxCommit {
+		t.Errorf("AfterTransaction hook should receive TxCommit as sql parameter: got %q, want %q", capturedSQL, TxCommit)
+	}
+}
