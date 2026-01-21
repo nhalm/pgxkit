@@ -72,7 +72,11 @@ func (t *Tx) Commit(ctx context.Context) error {
 	defer t.db.activeOps.Done()
 
 	err := t.tx.Commit(ctx)
-	if hookErr := t.db.hooks.executeAfterTransaction(ctx, TxCommit, nil, err); hookErr != nil && err == nil {
+	hookErr := t.db.hooks.executeAfterTransaction(ctx, TxCommit, nil, err)
+	if hookErr != nil {
+		if err != nil {
+			return errors.Join(err, fmt.Errorf("after commit hook failed: %w", hookErr))
+		}
 		return fmt.Errorf("after commit hook failed: %w", hookErr)
 	}
 	return err
