@@ -81,6 +81,7 @@ package pgxkit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -609,7 +610,9 @@ func (db *DB) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (*Tx, error)
 
 	pgxTx, err := db.writePool.BeginTx(ctx, txOptions)
 	if err != nil {
-		db.hooks.executeAfterTransaction(ctx, "", nil, err)
+		if hookErr := db.hooks.executeAfterTransaction(ctx, "", nil, err); hookErr != nil {
+			return nil, errors.Join(err, fmt.Errorf("after transaction hook failed: %w", hookErr))
+		}
 		return nil, err
 	}
 
