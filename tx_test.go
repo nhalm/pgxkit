@@ -3,6 +3,8 @@ package pgxkit
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -880,5 +882,53 @@ func TestTxIsFinalizedAfterRollback(t *testing.T) {
 
 	if !tx.IsFinalized() {
 		t.Error("IsFinalized should return true after Rollback")
+	}
+}
+
+func TestTxConcurrentCommitRollbackRace(t *testing.T) {
+	db := NewDB()
+
+	var commitCount atomic.Int32
+	var rollbackCount atomic.Int32
+
+	mock := &mockTx{
+		commitFunc: func(ctx context.Context) error {
+			commitCount.Add(1)
+			return nil
+		},
+		rollbackFunc: func(ctx context.Context) error {
+			rollbackCount.Add(1)
+			return nil
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	ctx := context.Background()
+	var wg sync.WaitGroup
+
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			if n%2 == 0 {
+				_ = tx.Commit(ctx)
+			} else {
+				_ = tx.Rollback(ctx)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	totalOps := commitCount.Load() + rollbackCount.Load()
+	if totalOps != 1 {
+		t.Errorf("Exactly 1 underlying operation should execute, got %d (commits: %d, rollbacks: %d)",
+			totalOps, commitCount.Load(), rollbackCount.Load())
+	}
+
+	if !tx.IsFinalized() {
+		t.Error("Transaction should be finalized after concurrent operations")
 	}
 }
