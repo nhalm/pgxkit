@@ -351,6 +351,29 @@ func TestTxEscapeHatch(t *testing.T) {
 	}
 }
 
+func TestBeforeTransactionHookFailure(t *testing.T) {
+	pool := requireTestPool(t)
+	ctx := context.Background()
+
+	hookErr := errors.New("before transaction hook error")
+
+	db := NewDB()
+	db.readPool = pool
+	db.writePool = pool
+	db.hooks = newHooks()
+	db.hooks.addHook(BeforeTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		return hookErr
+	})
+
+	_, err := db.BeginTx(ctx, pgx.TxOptions{})
+	if err == nil {
+		t.Fatal("Expected BeginTx to return error when BeforeTransaction hook fails, got nil")
+	}
+	if !errors.Is(err, hookErr) {
+		t.Errorf("Expected error to wrap hook error, got: %v", err)
+	}
+}
+
 func TestTransactionHookErrorPropagation(t *testing.T) {
 	pool := requireTestPool(t)
 	ctx := context.Background()
