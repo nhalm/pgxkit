@@ -37,6 +37,9 @@ type Tx struct {
 // Query executes a query within the transaction.
 // Unlike DB.Query, this does not fire BeforeOperation/AfterOperation hooks.
 func (t *Tx) Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error) {
+	if t.finalized.Load() {
+		return nil, ErrTxFinalized
+	}
 	return t.tx.Query(ctx, sql, args...)
 }
 
