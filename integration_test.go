@@ -2,7 +2,11 @@ package pgxkit
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func TestRequireTestPool(t *testing.T) {
@@ -64,4 +68,440 @@ func TestPoolHealthCheck(t *testing.T) {
 	if stats == nil {
 		t.Error("Expected pool stats to be available")
 	}
+}
+
+func TestTransactionCommitFlow(t *testing.T) {
+	pool := requireTestPool(t)
+	ctx := context.Background()
+
+	db := NewDB()
+	db.readPool = pool
+	db.writePool = pool
+
+	_, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS tx_test_commit (id SERIAL PRIMARY KEY, value TEXT)`)
+	if err != nil {
+		t.Fatalf("Failed to create test table: %v", err)
+	}
+	defer CleanupTestData("DROP TABLE IF EXISTS tx_test_commit")
+
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("BeginTx failed: %v", err)
+	}
+
+	_, err = tx.Exec(ctx, `INSERT INTO tx_test_commit (value) VALUES ($1)`, "test_value")
+	if err != nil {
+		tx.Rollback(ctx)
+		t.Fatalf("Insert in transaction failed: %v", err)
+	}
+
+	err = tx.Commit(ctx)
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	var value string
+	err = pool.QueryRow(ctx, `SELECT value FROM tx_test_commit WHERE value = $1`, "test_value").Scan(&value)
+	if err != nil {
+		t.Fatalf("Failed to verify committed data: %v", err)
+	}
+	if value != "test_value" {
+		t.Errorf("Expected 'test_value', got '%s'", value)
+	}
+}
+
+func TestTransactionRollbackOnError(t *testing.T) {
+	pool := requireTestPool(t)
+	ctx := context.Background()
+
+	db := NewDB()
+	db.readPool = pool
+	db.writePool = pool
+
+	_, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS tx_test_rollback (id SERIAL PRIMARY KEY, value TEXT NOT NULL)`)
+	if err != nil {
+		t.Fatalf("Failed to create test table: %v", err)
+	}
+	defer CleanupTestData("DROP TABLE IF EXISTS tx_test_rollback")
+
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("BeginTx failed: %v", err)
+	}
+	defer tx.Rollback(ctx)
+
+	_, err = tx.Exec(ctx, `INSERT INTO tx_test_rollback (value) VALUES ($1)`, "before_error")
+	if err != nil {
+		t.Fatalf("First insert failed: %v", err)
+	}
+
+	_, err = tx.Exec(ctx, `INSERT INTO tx_test_rollback (value) VALUES ($1)`, nil)
+	if err == nil {
+		t.Fatal("Expected error on NULL insert into NOT NULL column")
+	}
+
+	err = tx.Rollback(ctx)
+	if err != nil {
+		t.Fatalf("Rollback failed: %v", err)
+	}
+
+	var count int
+	err = pool.QueryRow(ctx, `SELECT COUNT(*) FROM tx_test_rollback`).Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to count rows: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("Expected 0 rows after rollback, got %d", count)
+	}
+}
+
+func TestGracefulShutdownWaitsForTransaction(t *testing.T) {
+	pool := requireTestPool(t)
+	ctx := context.Background()
+
+	db := NewDB()
+	db.readPool = pool
+	db.writePool = pool
+
+	_, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS tx_test_shutdown (id SERIAL PRIMARY KEY, value TEXT)`)
+	if err != nil {
+		t.Fatalf("Failed to create test table: %v", err)
+	}
+	defer CleanupTestData("DROP TABLE IF EXISTS tx_test_shutdown")
+
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("BeginTx failed: %v", err)
+	}
+
+	shutdownComplete := make(chan struct{})
+	go func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		db.Shutdown(shutdownCtx)
+		close(shutdownComplete)
+	}()
+
+	select {
+	case <-shutdownComplete:
+		t.Fatal("Shutdown completed before transaction finished")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	_, err = tx.Exec(ctx, `INSERT INTO tx_test_shutdown (value) VALUES ($1)`, "during_shutdown")
+	if err != nil {
+		tx.Rollback(ctx)
+		t.Fatalf("Insert during shutdown wait failed: %v", err)
+	}
+
+	err = tx.Commit(ctx)
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	select {
+	case <-shutdownComplete:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Shutdown did not complete after transaction finished")
+	}
+
+	var value string
+	err = pool.QueryRow(ctx, `SELECT value FROM tx_test_shutdown WHERE value = $1`, "during_shutdown").Scan(&value)
+	if err != nil {
+		t.Fatalf("Failed to verify committed data: %v", err)
+	}
+	if value != "during_shutdown" {
+		t.Errorf("Expected 'during_shutdown', got '%s'", value)
+	}
+}
+
+func TestActiveOpsTracking(t *testing.T) {
+	pool := requireTestPool(t)
+	ctx := context.Background()
+
+	t.Run("increments on BeginTx and decrements on Commit", func(t *testing.T) {
+		db := NewDB()
+		db.readPool = pool
+		db.writePool = pool
+
+		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			t.Fatalf("BeginTx failed: %v", err)
+		}
+
+		shutdownComplete := make(chan struct{})
+		go func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			db.Shutdown(shutdownCtx)
+			close(shutdownComplete)
+		}()
+
+		select {
+		case <-shutdownComplete:
+			t.Fatal("Shutdown completed before Commit - activeOps not incremented on BeginTx")
+		case <-time.After(100 * time.Millisecond):
+		}
+
+		err = tx.Commit(ctx)
+		if err != nil {
+			t.Fatalf("Commit failed: %v", err)
+		}
+
+		select {
+		case <-shutdownComplete:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Shutdown did not complete after Commit - activeOps not decremented")
+		}
+	})
+
+	t.Run("increments on BeginTx and decrements on Rollback", func(t *testing.T) {
+		db := NewDB()
+		db.readPool = pool
+		db.writePool = pool
+
+		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			t.Fatalf("BeginTx failed: %v", err)
+		}
+
+		shutdownComplete := make(chan struct{})
+		go func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			db.Shutdown(shutdownCtx)
+			close(shutdownComplete)
+		}()
+
+		select {
+		case <-shutdownComplete:
+			t.Fatal("Shutdown completed before Rollback - activeOps not incremented on BeginTx")
+		case <-time.After(100 * time.Millisecond):
+		}
+
+		err = tx.Rollback(ctx)
+		if err != nil {
+			t.Fatalf("Rollback failed: %v", err)
+		}
+
+		select {
+		case <-shutdownComplete:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Shutdown did not complete after Rollback - activeOps not decremented")
+		}
+	})
+}
+
+func TestTxEscapeHatch(t *testing.T) {
+	pool := requireTestPool(t)
+	ctx := context.Background()
+
+	db := NewDB()
+	db.readPool = pool
+	db.writePool = pool
+
+	_, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS tx_test_escape_hatch (id SERIAL PRIMARY KEY, value TEXT)`)
+	if err != nil {
+		t.Fatalf("Failed to create test table: %v", err)
+	}
+	defer CleanupTestData("DROP TABLE IF EXISTS tx_test_escape_hatch")
+
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		t.Fatalf("BeginTx failed: %v", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Get the underlying pgx.Tx via escape hatch
+	rawTx := tx.Tx()
+	if rawTx == nil {
+		t.Fatal("Tx() returned nil")
+	}
+
+	// Execute query using the raw pgx.Tx
+	_, err = rawTx.Exec(ctx, `INSERT INTO tx_test_escape_hatch (value) VALUES ($1)`, "escape_hatch_value")
+	if err != nil {
+		t.Fatalf("Exec via raw pgx.Tx failed: %v", err)
+	}
+
+	// Query using the raw pgx.Tx
+	var value string
+	err = rawTx.QueryRow(ctx, `SELECT value FROM tx_test_escape_hatch WHERE value = $1`, "escape_hatch_value").Scan(&value)
+	if err != nil {
+		t.Fatalf("QueryRow via raw pgx.Tx failed: %v", err)
+	}
+	if value != "escape_hatch_value" {
+		t.Errorf("Expected 'escape_hatch_value', got '%s'", value)
+	}
+
+	// Commit using the wrapper to ensure proper cleanup
+	err = tx.Commit(ctx)
+	if err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	// Verify data was committed
+	var count int
+	err = pool.QueryRow(ctx, `SELECT COUNT(*) FROM tx_test_escape_hatch WHERE value = $1`, "escape_hatch_value").Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to verify committed data: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected 1 row, got %d", count)
+	}
+}
+
+func TestBeforeTransactionHookFailure(t *testing.T) {
+	pool := requireTestPool(t)
+	ctx := context.Background()
+
+	hookErr := errors.New("before transaction hook error")
+
+	db := NewDB()
+	db.readPool = pool
+	db.writePool = pool
+	db.hooks = newHooks()
+	db.hooks.addHook(BeforeTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		return hookErr
+	})
+
+	_, err := db.BeginTx(ctx, pgx.TxOptions{})
+	if err == nil {
+		t.Fatal("Expected BeginTx to return error when BeforeTransaction hook fails, got nil")
+	}
+	if !errors.Is(err, hookErr) {
+		t.Errorf("Expected error to wrap hook error, got: %v", err)
+	}
+}
+
+func TestBeginTxFailureFiresAfterTransactionHook(t *testing.T) {
+	pool := requireTestPool(t)
+	ctx := context.Background()
+
+	var hookCalled bool
+	var hookErr error
+
+	db := NewDB()
+	db.readPool = pool
+	db.writePool = pool
+	db.hooks = newHooks()
+	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		hookCalled = true
+		hookErr = operationErr
+		return nil
+	})
+
+	// Force BeginTx to fail by using a cancelled context
+	cancelledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+
+	_, err := db.BeginTx(cancelledCtx, pgx.TxOptions{})
+	if err == nil {
+		t.Fatal("Expected BeginTx to fail with cancelled context")
+	}
+
+	if !hookCalled {
+		t.Fatal("Expected AfterTransaction hook to be called on BeginTx failure")
+	}
+
+	if hookErr == nil {
+		t.Error("Expected hook to receive the error, got nil")
+	}
+}
+
+func TestTransactionHookErrorPropagation(t *testing.T) {
+	pool := requireTestPool(t)
+	ctx := context.Background()
+
+	hookErr := errors.New("after transaction hook error")
+
+	t.Run("Commit propagates AfterTransaction hook error", func(t *testing.T) {
+		db := NewDB()
+		db.readPool = pool
+		db.writePool = pool
+		db.hooks = newHooks()
+		db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+			return hookErr
+		})
+
+		_, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS tx_test_hook_commit (id SERIAL PRIMARY KEY, value TEXT)`)
+		if err != nil {
+			t.Fatalf("Failed to create test table: %v", err)
+		}
+		defer CleanupTestData("DROP TABLE IF EXISTS tx_test_hook_commit")
+
+		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			t.Fatalf("BeginTx failed: %v", err)
+		}
+
+		_, err = tx.Exec(ctx, `INSERT INTO tx_test_hook_commit (value) VALUES ($1)`, "hook_test")
+		if err != nil {
+			tx.Rollback(ctx)
+			t.Fatalf("Insert failed: %v", err)
+		}
+
+		err = tx.Commit(ctx)
+		if err == nil {
+			t.Fatal("Expected Commit to return hook error, got nil")
+		}
+		if !errors.Is(err, hookErr) {
+			t.Errorf("Expected hook error, got: %v", err)
+		}
+
+		// Verify data was actually committed (hook error doesn't rollback)
+		var count int
+		err = pool.QueryRow(ctx, `SELECT COUNT(*) FROM tx_test_hook_commit WHERE value = $1`, "hook_test").Scan(&count)
+		if err != nil {
+			t.Fatalf("Failed to verify data: %v", err)
+		}
+		if count != 1 {
+			t.Errorf("Expected 1 row (commit succeeded despite hook error), got %d", count)
+		}
+	})
+
+	t.Run("Rollback propagates AfterTransaction hook error", func(t *testing.T) {
+		db := NewDB()
+		db.readPool = pool
+		db.writePool = pool
+		db.hooks = newHooks()
+		db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+			return hookErr
+		})
+
+		_, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS tx_test_hook_rollback (id SERIAL PRIMARY KEY, value TEXT)`)
+		if err != nil {
+			t.Fatalf("Failed to create test table: %v", err)
+		}
+		defer CleanupTestData("DROP TABLE IF EXISTS tx_test_hook_rollback")
+
+		tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			t.Fatalf("BeginTx failed: %v", err)
+		}
+
+		_, err = tx.Exec(ctx, `INSERT INTO tx_test_hook_rollback (value) VALUES ($1)`, "hook_test")
+		if err != nil {
+			tx.Rollback(ctx)
+			t.Fatalf("Insert failed: %v", err)
+		}
+
+		err = tx.Rollback(ctx)
+		if err == nil {
+			t.Fatal("Expected Rollback to return hook error, got nil")
+		}
+		if !errors.Is(err, hookErr) {
+			t.Errorf("Expected hook error, got: %v", err)
+		}
+
+		// Verify data was actually rolled back (hook error doesn't affect rollback)
+		var count int
+		err = pool.QueryRow(ctx, `SELECT COUNT(*) FROM tx_test_hook_rollback WHERE value = $1`, "hook_test").Scan(&count)
+		if err != nil {
+			t.Fatalf("Failed to verify data: %v", err)
+		}
+		if count != 0 {
+			t.Errorf("Expected 0 rows (rollback succeeded despite hook error), got %d", count)
+		}
+	})
 }

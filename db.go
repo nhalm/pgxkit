@@ -41,10 +41,47 @@
 //
 // The package follows a "safety first" design - all default methods use the write pool
 // for consistency, with explicit ReadQuery() methods available for read optimization.
+//
+// Transaction Usage:
+//
+// pgxkit provides a Tx type that wraps pgx.Tx and implements the Executor interface,
+// allowing you to write functions that work with both *DB and *Tx interchangeably.
+//
+//	func CreateUser(ctx context.Context, exec pgxkit.Executor, name string) (int, error) {
+//	    var id int
+//	    err := exec.QueryRow(ctx, "INSERT INTO users (name) VALUES ($1) RETURNING id", name).Scan(&id)
+//	    return id, err
+//	}
+//
+//	// Works with *DB
+//	id, err := CreateUser(ctx, db, "Alice")
+//
+//	// Works with *Tx
+//	tx, _ := db.BeginTx(ctx, pgx.TxOptions{})
+//	id, err := CreateUser(ctx, tx, "Bob")
+//
+// The recommended transaction pattern uses defer for safety:
+//
+//	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+//	if err != nil {
+//	    return err
+//	}
+//	defer tx.Rollback(ctx) // Safe no-op if already committed
+//
+//	_, err = tx.Exec(ctx, "INSERT INTO users (name) VALUES ($1)", "Alice")
+//	if err != nil {
+//	    return err
+//	}
+//
+//	return tx.Commit(ctx)
+//
+// Transactions are tracked by activeOps for graceful shutdown - Shutdown will wait
+// for active transactions to complete. The *Tx type is NOT goroutine-safe.
 package pgxkit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -55,6 +92,16 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// Executor is a unified interface for database operations that both *DB and *Tx implement.
+// This allows passing a single interface for database operations whether in a transaction or not.
+type Executor interface {
+	Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row
+	Exec(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error)
+}
+
+var _ Executor = (*DB)(nil)
 
 func getEnvWithDefault(key, def string) string {
 	val := os.Getenv(key)
@@ -533,7 +580,8 @@ func (db *DB) ReadQueryRow(ctx context.Context, sql string, args ...interface{})
 
 // BeginTx starts a transaction using the write pool.
 // Transactions always use the write pool to ensure consistency.
-// The transaction will execute BeforeTransaction and AfterTransaction hooks.
+// The transaction will execute BeforeTransaction hook on start
+// and AfterTransaction hook on Commit/Rollback.
 //
 // Example:
 //
@@ -548,7 +596,7 @@ func (db *DB) ReadQueryRow(ctx context.Context, sql string, args ...interface{})
 //	    return err
 //	}
 //	return tx.Commit(ctx)
-func (db *DB) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error) {
+func (db *DB) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (*Tx, error) {
 	db.mu.RLock()
 	if db.shutdown {
 		db.mu.RUnlock()
@@ -560,17 +608,16 @@ func (db *DB) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, err
 		return nil, fmt.Errorf("before transaction hook failed: %w", err)
 	}
 
-	tx, err := db.writePool.BeginTx(ctx, txOptions)
-
-	hookErr := db.hooks.executeAfterTransaction(ctx, "", nil, err)
-	if hookErr != nil && err == nil {
-		if tx != nil {
-			tx.Rollback(ctx)
+	pgxTx, err := db.writePool.BeginTx(ctx, txOptions)
+	if err != nil {
+		if hookErr := db.hooks.executeAfterTransaction(ctx, "", nil, err); hookErr != nil {
+			return nil, errors.Join(err, fmt.Errorf("after transaction hook failed: %w", hookErr))
 		}
-		return nil, fmt.Errorf("after transaction hook failed: %w", hookErr)
+		return nil, err
 	}
 
-	return tx, err
+	db.activeOps.Add(1)
+	return &Tx{tx: pgxTx, db: db}, nil
 }
 
 // Shutdown gracefully shuts down the database connections.
