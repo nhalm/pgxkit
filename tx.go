@@ -2,12 +2,20 @@ package pgxkit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
+
+const (
+	TxCommit   = "TX:COMMIT"
+	TxRollback = "TX:ROLLBACK"
+)
+
+var ErrTxFinalized = errors.New("transaction already finalized")
 
 var _ Executor = (*Tx)(nil)
 
