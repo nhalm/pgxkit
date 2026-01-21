@@ -790,3 +790,26 @@ func TestTxQueryAfterRollback(t *testing.T) {
 		t.Errorf("Query after Rollback should return ErrTxFinalized: got %v", err)
 	}
 }
+
+func TestTxQueryRowAfterRollback(t *testing.T) {
+	db := NewDB()
+
+	mock := &mockTx{
+		rollbackFunc: func(ctx context.Context) error {
+			return nil
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	ctx := context.Background()
+	_ = tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, "SELECT 1")
+	var result int
+	err := row.Scan(&result)
+	if !errors.Is(err, ErrTxFinalized) {
+		t.Errorf("QueryRow.Scan after Rollback should return ErrTxFinalized: got %v", err)
+	}
+}
