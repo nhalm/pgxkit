@@ -675,3 +675,32 @@ func TestTxCommitBothOperationAndHookError(t *testing.T) {
 		t.Errorf("Combined error should contain hook error: got %v", err)
 	}
 }
+
+func TestTxRollbackBothOperationAndHookError(t *testing.T) {
+	db := NewDB()
+	rollbackErr := errors.New("rollback failed")
+	hookErr := errors.New("hook failed")
+
+	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		return hookErr
+	})
+
+	mock := &mockTx{
+		rollbackFunc: func(ctx context.Context) error {
+			return rollbackErr
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	ctx := context.Background()
+	err := tx.Rollback(ctx)
+
+	if !errors.Is(err, rollbackErr) {
+		t.Errorf("Combined error should contain rollback error: got %v", err)
+	}
+	if !errors.Is(err, hookErr) {
+		t.Errorf("Combined error should contain hook error: got %v", err)
+	}
+}
