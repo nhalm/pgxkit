@@ -109,6 +109,9 @@ if err != nil {
 return tx.Commit(ctx)
 ```
 
+**Shutdown Behavior:**
+Tx operations (`Query`, `QueryRow`, `Exec`, `Commit`, `Rollback`) do not check `db.shutdown` state. Active transactions are allowed to complete during graceful shutdown. This design ensures that in-flight transactions aren't abruptly terminated when `Shutdown()` is called - they can finish their work and commit or rollback normally.
+
 ## Database Connection
 
 ### NewDB
