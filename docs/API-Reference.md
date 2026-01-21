@@ -459,7 +459,7 @@ const (
     BeforeOperation   HookType = iota // Called before any query/exec operation
     AfterOperation                    // Called after any query/exec operation
     BeforeTransaction                 // Called before starting a transaction
-    AfterTransaction                  // Called after a transaction completes
+    AfterTransaction                  // Called after Commit/Rollback. Receives TxCommit or TxRollback as sql parameter.
     OnShutdown                        // Called during graceful shutdown
 )
 ```
