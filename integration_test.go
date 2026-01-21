@@ -374,6 +374,41 @@ func TestBeforeTransactionHookFailure(t *testing.T) {
 	}
 }
 
+func TestBeginTxFailureFiresAfterTransactionHook(t *testing.T) {
+	pool := requireTestPool(t)
+	ctx := context.Background()
+
+	var hookCalled bool
+	var hookErr error
+
+	db := NewDB()
+	db.readPool = pool
+	db.writePool = pool
+	db.hooks = newHooks()
+	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		hookCalled = true
+		hookErr = operationErr
+		return nil
+	})
+
+	// Force BeginTx to fail by using a cancelled context
+	cancelledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+
+	_, err := db.BeginTx(cancelledCtx, pgx.TxOptions{})
+	if err == nil {
+		t.Fatal("Expected BeginTx to fail with cancelled context")
+	}
+
+	if !hookCalled {
+		t.Fatal("Expected AfterTransaction hook to be called on BeginTx failure")
+	}
+
+	if hookErr == nil {
+		t.Error("Expected hook to receive the error, got nil")
+	}
+}
+
 func TestTransactionHookErrorPropagation(t *testing.T) {
 	pool := requireTestPool(t)
 	ctx := context.Background()
