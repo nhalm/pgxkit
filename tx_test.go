@@ -748,3 +748,24 @@ func TestTxQueryRowAfterFinalization(t *testing.T) {
 		t.Errorf("QueryRow.Scan after Commit should return ErrTxFinalized: got %v", err)
 	}
 }
+
+func TestTxExecAfterFinalization(t *testing.T) {
+	db := NewDB()
+
+	mock := &mockTx{
+		commitFunc: func(ctx context.Context) error {
+			return nil
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	ctx := context.Background()
+	_ = tx.Commit(ctx)
+
+	_, err := tx.Exec(ctx, "UPDATE users SET name = $1 WHERE id = $2", "Alice", 42)
+	if !errors.Is(err, ErrTxFinalized) {
+		t.Errorf("Exec after Commit should return ErrTxFinalized: got %v", err)
+	}
+}
