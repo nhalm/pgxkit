@@ -704,3 +704,24 @@ func TestTxRollbackBothOperationAndHookError(t *testing.T) {
 		t.Errorf("Combined error should contain hook error: got %v", err)
 	}
 }
+
+func TestTxQueryAfterFinalization(t *testing.T) {
+	db := NewDB()
+
+	mock := &mockTx{
+		commitFunc: func(ctx context.Context) error {
+			return nil
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	ctx := context.Background()
+	_ = tx.Commit(ctx)
+
+	_, err := tx.Query(ctx, "SELECT 1")
+	if !errors.Is(err, ErrTxFinalized) {
+		t.Errorf("Query after Commit should return ErrTxFinalized: got %v", err)
+	}
+}
