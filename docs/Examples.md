@@ -316,6 +316,43 @@ func setupMetrics() *pgxkit.DB {
 }
 ```
 
+### Transaction Outcome Hook
+
+```go
+func setupTransactionMetrics() *pgxkit.DB {
+    ctx := context.Background()
+    db := pgxkit.NewDB()
+
+    err := db.Connect(ctx, "",
+        pgxkit.WithAfterTransaction(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+            // The sql parameter indicates transaction outcome
+            switch sql {
+            case pgxkit.TxCommit:
+                if operationErr != nil {
+                    metrics.TransactionCommitErrors.Inc()
+                    log.Printf("Transaction commit failed: %v", operationErr)
+                } else {
+                    metrics.TransactionCommits.Inc()
+                }
+            case pgxkit.TxRollback:
+                if operationErr != nil {
+                    metrics.TransactionRollbackErrors.Inc()
+                    log.Printf("Transaction rollback failed: %v", operationErr)
+                } else {
+                    metrics.TransactionRollbacks.Inc()
+                }
+            }
+            return nil
+        }),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    return db
+}
+```
+
 ## Retry Logic
 
 ### Basic Retry
