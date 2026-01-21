@@ -93,7 +93,7 @@ func (t *Tx) Rollback(ctx context.Context) error {
 	defer t.db.activeOps.Done()
 
 	err := t.tx.Rollback(ctx)
-	if hookErr := t.db.hooks.executeAfterTransaction(ctx, "", nil, err); hookErr != nil && err == nil {
+	if hookErr := t.db.hooks.executeAfterTransaction(ctx, TxRollback, nil, err); hookErr != nil && err == nil {
 		return fmt.Errorf("after rollback hook failed: %w", hookErr)
 	}
 	return err
