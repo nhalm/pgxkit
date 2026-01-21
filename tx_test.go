@@ -620,3 +620,29 @@ func TestTxCommitHookReceivesOperationType(t *testing.T) {
 		t.Errorf("AfterTransaction hook should receive TxCommit as sql parameter: got %q, want %q", capturedSQL, TxCommit)
 	}
 }
+
+func TestTxRollbackHookReceivesOperationType(t *testing.T) {
+	db := NewDB()
+
+	var capturedSQL string
+	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		capturedSQL = sql
+		return nil
+	})
+
+	mock := &mockTx{
+		rollbackFunc: func(ctx context.Context) error {
+			return nil
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	ctx := context.Background()
+	_ = tx.Rollback(ctx)
+
+	if capturedSQL != TxRollback {
+		t.Errorf("AfterTransaction hook should receive TxRollback as sql parameter: got %q, want %q", capturedSQL, TxRollback)
+	}
+}
