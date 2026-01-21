@@ -386,6 +386,35 @@ func (t *Tx) Tx() pgx.Tx
 
 Returns the underlying pgx.Tx for advanced use cases that require direct access to pgx transaction functionality.
 
+## Transaction Errors
+
+### ErrTxFinalized
+
+```go
+var ErrTxFinalized = errors.New("transaction already finalized")
+```
+
+Returned when attempting to use a transaction after it has been committed or rolled back. This error is returned by `Query()`, `QueryRow()`, and `Exec()` on a finalized transaction.
+
+**Example:**
+```go
+tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+if err != nil {
+    return err
+}
+
+err = tx.Commit(ctx)
+if err != nil {
+    return err
+}
+
+// Attempting to use the transaction after commit
+_, err = tx.Exec(ctx, "INSERT INTO users (name) VALUES ($1)", "Alice")
+if errors.Is(err, pgxkit.ErrTxFinalized) {
+    log.Println("Transaction was already finalized")
+}
+```
+
 ## Hook System
 
 Hooks are configured via `ConnectOption` functions passed to `Connect()` or `ConnectReadWrite()`.
