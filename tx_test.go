@@ -646,3 +646,32 @@ func TestTxRollbackHookReceivesOperationType(t *testing.T) {
 		t.Errorf("AfterTransaction hook should receive TxRollback as sql parameter: got %q, want %q", capturedSQL, TxRollback)
 	}
 }
+
+func TestTxCommitBothOperationAndHookError(t *testing.T) {
+	db := NewDB()
+	commitErr := errors.New("commit failed")
+	hookErr := errors.New("hook failed")
+
+	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		return hookErr
+	})
+
+	mock := &mockTx{
+		commitFunc: func(ctx context.Context) error {
+			return commitErr
+		},
+	}
+
+	db.activeOps.Add(1)
+	tx := &Tx{tx: mock, db: db}
+
+	ctx := context.Background()
+	err := tx.Commit(ctx)
+
+	if !errors.Is(err, commitErr) {
+		t.Errorf("Combined error should contain commit error: got %v", err)
+	}
+	if !errors.Is(err, hookErr) {
+		t.Errorf("Combined error should contain hook error: got %v", err)
+	}
+}
