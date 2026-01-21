@@ -108,3 +108,8 @@ func (t *Tx) Rollback(ctx context.Context) error {
 func (t *Tx) Tx() pgx.Tx {
 	return t.tx
 }
+
+// IsFinalized returns true if the transaction has been committed or rolled back.
+func (t *Tx) IsFinalized() bool {
+	return t.finalized.Load()
+}
