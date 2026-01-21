@@ -55,6 +55,9 @@ func (t *Tx) QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.
 // Exec executes a statement within the transaction.
 // Unlike DB.Exec, this does not fire BeforeOperation/AfterOperation hooks.
 func (t *Tx) Exec(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error) {
+	if t.finalized.Load() {
+		return pgconn.CommandTag{}, ErrTxFinalized
+	}
 	return t.tx.Exec(ctx, sql, args...)
 }
 
