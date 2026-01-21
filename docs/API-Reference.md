@@ -415,6 +415,37 @@ if errors.Is(err, pgxkit.ErrTxFinalized) {
 }
 ```
 
+## Transaction Hook Constants
+
+### TxCommit and TxRollback
+
+```go
+const (
+    TxCommit   = "TX:COMMIT"
+    TxRollback = "TX:ROLLBACK"
+)
+```
+
+These constants are passed as the `sql` parameter to `AfterTransaction` hooks, allowing you to distinguish between commit and rollback operations.
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `TxCommit` | `"TX:COMMIT"` | Passed when a transaction is committed |
+| `TxRollback` | `"TX:ROLLBACK"` | Passed when a transaction is rolled back |
+
+**Example:**
+```go
+pgxkit.WithAfterTransaction(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+    switch sql {
+    case pgxkit.TxCommit:
+        log.Println("Transaction committed")
+    case pgxkit.TxRollback:
+        log.Println("Transaction rolled back")
+    }
+    return nil
+})
+```
+
 ## Hook System
 
 Hooks are configured via `ConnectOption` functions passed to `Connect()` or `ConnectReadWrite()`.
