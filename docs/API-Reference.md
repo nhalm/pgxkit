@@ -378,6 +378,23 @@ func (t *Tx) Rollback(ctx context.Context) error
 
 Rolls back the transaction. Fires the AfterTransaction hook and propagates hook errors when the rollback succeeds. Uses atomic finalization to ensure activeOps.Done() is called exactly once. Safe to call after Commit (returns nil).
 
+**Finalization Behavior:**
+Both Commit and Rollback mark the transaction as finalized *before* executing the underlying operation. This matches pgx semantics where the transaction state is set before the database round-trip. Once finalized, subsequent calls to `Query()`, `QueryRow()`, or `Exec()` return `ErrTxFinalized`. For retry logic that needs to restart transactions on serialization failures or deadlocks, use `RetryOperation` with the entire transaction block:
+
+```go
+err := pgxkit.RetryOperation(ctx, func(ctx context.Context) error {
+    tx, err := db.BeginTx(ctx, pgx.TxOptions{})
+    if err != nil {
+        return err
+    }
+    defer tx.Rollback(ctx)
+
+    // Transaction operations...
+
+    return tx.Commit(ctx)
+})
+```
+
 #### Tx
 
 ```go
