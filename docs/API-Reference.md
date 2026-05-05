@@ -853,6 +853,59 @@ func TestUserQueries(t *testing.T) {
 }
 ```
 
+### EnableGolden
+
+```go
+func (tdb *TestDB) EnableGolden(testName string, opts ...GoldenOption) *DB
+```
+
+Enables golden transcript testing. Records every database event (BEGIN, QUERY, COMMIT, ROLLBACK) the scenario produces, along with the SQL, normalized args, and materialized result rows. Call `AssertGolden` after the scenario to compare the transcript against `testdata/golden/<testName>.json`. Volatile values (`time.Time`, UUIDs, integer columns named `id` or `*_id`) are normalized to stable placeholders so transcripts compare cleanly across runs.
+
+**Example:**
+```go
+func TestCreateOrder(t *testing.T) {
+    testDB := pgxkit.NewTestDB()
+    ctx := context.Background()
+    if err := testDB.Connect(ctx, ""); err != nil {
+        t.Skip("Test database not available:", err)
+    }
+    defer testDB.Shutdown(ctx)
+    defer pgxkit.CleanupGolden("TestCreateOrder")
+
+    golden := testDB.EnableGolden("TestCreateOrder")
+    // ... call the code under test using golden as the DB ...
+    golden.AssertGolden(t, "TestCreateOrder")
+}
+```
+
+Use `go test -overwrite-golden` to regenerate baselines after intentional behavior changes.
+
+### GoldenOption / WithGoldenNormalizer
+
+```go
+type GoldenOption func(*transcriptRecorder)
+
+func WithGoldenNormalizer(fn func(any) (any, bool)) GoldenOption
+```
+
+`WithGoldenNormalizer` registers a custom normalizer that runs before pgxkit's defaults. Return `(replacement, true)` to take over normalization for the value; return `(nil, false)` to fall through to the next custom normalizer or to the defaults.
+
+### AssertGolden
+
+```go
+func (db *DB) AssertGolden(t *testing.T, testName string)
+```
+
+Compares the captured transcript against `testdata/golden/<testName>.json`. On the first run (or with the `-overwrite-golden` flag) it writes the baseline and logs that fact. On subsequent runs it fails the test with a unified diff if the transcript has changed. `testName` must match the name passed to `EnableGolden`.
+
+### CleanupGolden
+
+```go
+func CleanupGolden(testName string) error
+```
+
+Removes the golden transcript file for the named scenario from `testdata/golden/`. Tests that create golden files should defer this call to keep the repository clean of throwaway baselines.
+
 ## Utility Functions
 
 ### GetDSN

@@ -11,11 +11,12 @@ This guide covers effective testing strategies and best practices when using pgx
 3. [Unit Testing](#unit-testing)
 4. [Integration Testing](#integration-testing)
 5. [Plan-Regression Testing](#plan-regression-testing)
-6. [Testing Patterns](#testing-patterns)
-7. [Test Data Management](#test-data-management)
-8. [Performance Testing](#performance-testing)
-9. [Error Testing](#error-testing)
-10. [Best Practices](#best-practices)
+6. [Golden Transcript Testing](#golden-transcript-testing)
+7. [Testing Patterns](#testing-patterns)
+8. [Test Data Management](#test-data-management)
+9. [Performance Testing](#performance-testing)
+10. [Error Testing](#error-testing)
+11. [Best Practices](#best-practices)
 
 ## Testing Philosophy
 
@@ -562,6 +563,85 @@ func TestPerformanceRegression(t *testing.T) {
 }
 ```
 
+## Golden Transcript Testing
+
+Golden transcript testing is a behavioral assertion: it captures the full sequence of database events a scenario produces — `BEGIN`, every `Query`/`Exec` with its SQL, normalized args, and materialized result rows, and the closing `COMMIT` or `ROLLBACK` — and asserts on subsequent runs that the transcript hasn't changed. It catches an extra UPDATE, a missing INSERT, a different argument, a different returned row, or a `COMMIT` becoming a `ROLLBACK`.
+
+This complements [Plan-Regression Testing](#plan-regression-testing): plan-regression catches changes to query plan *shape*, golden transcripts catch changes to *behavior*. Use one or the other per scenario — `EnableGolden` and `EnableAssertPlan` each return a fresh `*DB`, so they don't compose on the same instance.
+
+### Basic Usage
+
+```go
+func TestCreateOrder(t *testing.T) {
+    testDB := pgxkit.RequireDB(t)
+    defer pgxkit.CleanupGolden("TestCreateOrder")
+
+    golden := testDB.EnableGolden("TestCreateOrder")
+
+    // run the code under test using golden as the DB
+    _, err := golden.Exec(context.Background(),
+        "INSERT INTO orders (total) VALUES ($1)", 100)
+    require.NoError(t, err)
+
+    golden.AssertGolden(t, "TestCreateOrder")
+}
+```
+
+On the first run, the test writes `testdata/golden/TestCreateOrder.json` and logs that a baseline was created. On subsequent runs, it compares the recorded transcript against that file and fails with a unified diff on any mismatch.
+
+### What the Transcript Captures
+
+Every event pgxkit observes ends up in the transcript, in order:
+
+- `BEGIN`, `COMMIT`, `ROLLBACK` for transactions started via `BeginTx`.
+- `QUERY` events for every `Query`, `QueryRow`, and `Exec` call — including DDL (`CREATE TABLE`, `ALTER`, etc.) and `SET` statements. There is no SQL-prefix filter.
+- For `Query` and `QueryRow`, materialized result rows as `column → value` maps.
+- For `Exec`, the `rows_affected` integer from the command tag.
+
+Caller iteration of `pgx.Rows` still works normally — pgxkit reads the rows once for the transcript, then replays them through a wrapper.
+
+### Refreshing the Baseline
+
+When you intentionally change behavior (a new column in a returning clause, an extra normalization step, a deliberate query reorder), regenerate the baseline:
+
+```bash
+go test -overwrite-golden -run TestCreateOrder
+```
+
+The flag is package-scoped on pgxkit, so any test binary that links pgxkit accepts it.
+
+### Normalization Defaults
+
+To keep transcripts stable across runs, volatile values are replaced with placeholders before the transcript is written or compared:
+
+- `time.Time` values → `"<TIMESTAMP>"`.
+- UUIDs (`uuid.UUID`, `[16]byte`, or canonical UUID strings) → `"<UUID:1>"`, `"<UUID:2>"`, ... assigned in first-seen order, so the same UUID gets the same placeholder wherever it appears.
+- Integer columns whose name is `id` or ends in `_id` → `"<ID:1>"`, `"<ID:2>"`, ... also first-seen by numeric value (so `id=7` and `user_id=7` collapse to the same placeholder).
+
+Args have no column hint, so integer normalization does not trigger there; timestamps and UUIDs do.
+
+### Custom Normalization
+
+Add domain-specific normalizers via `WithGoldenNormalizer`. Custom normalizers run **before** defaults, so you can override `time.Time` handling, redact sensitive fields, or canonicalize ordering of map-shaped values:
+
+```go
+golden := testDB.EnableGolden("TestCreateOrder",
+    pgxkit.WithGoldenNormalizer(func(v any) (any, bool) {
+        if s, ok := v.(string); ok && strings.HasPrefix(s, "ord_") {
+            return "<ORDER>", true
+        }
+        return nil, false
+    }),
+)
+```
+
+Return `(replacement, true)` to take over normalization for the value, or `(nil, false)` to fall through to the next custom normalizer or to the defaults.
+
+### Limitations
+
+- `golden`-recorded `pgx.Rows` materializes data once; `RawValues()` returns nil and the wrapper is not bound to a live connection (`Conn()` returns nil). `Scan` covers the common destination kinds (strings, numerics, bools, time.Time, byte slices, `*any`, types implementing `sql.Scanner`, plus a reflect-based fallback for assignable types).
+- Concurrent fan-out within a single scenario is out of scope — captured order would be non-deterministic.
+
 ## Testing Patterns
 
 ### Table-Driven Tests
@@ -1097,6 +1177,7 @@ func TestUserService_GetActiveUsers_Bad(t *testing.T) {
 - [ ] Unit tests for business logic
 - [ ] Integration tests for database operations
 - [ ] Plan-regression tests for query plan shape
+- [ ] Golden transcript tests for behavioral stability
 - [ ] Error condition testing
 - [ ] Concurrent operation testing
 - [ ] Benchmark tests for critical paths

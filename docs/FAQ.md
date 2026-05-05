@@ -292,6 +292,29 @@ func TestComplexQuery_Plan(t *testing.T) {
 - Queries that depend on specific index usage
 - Catching unintentional plan changes in CI/CD
 
+### When should I use Golden testing vs Plan-Regression testing?
+
+They answer different questions, and pgxkit ships both.
+
+**Plan-Regression (`EnableAssertPlan` / `AssertPlan`)** asserts the *structural query plan* — the shape returned by `EXPLAIN (FORMAT JSON, COSTS OFF)`. It catches plan changes such as a seq-scan replacing an index-scan, a nested-loop turning into a hash-join, or a different join order. It does not look at result rows.
+
+**Golden transcripts (`EnableGolden` / `AssertGolden`)** assert the *behavior* of a scenario — the ordered sequence of `BEGIN`, every `Query`/`Exec` (with SQL, normalized args, and materialized rows), and the closing `COMMIT` or `ROLLBACK`. It catches an extra UPDATE, a missing INSERT, a different argument, a different returned row, or a `COMMIT` that became a `ROLLBACK`.
+
+```go
+func TestCreateOrder(t *testing.T) {
+    testDB := pgxkit.RequireDB(t)
+    defer pgxkit.CleanupGolden("TestCreateOrder")
+
+    golden := testDB.EnableGolden("TestCreateOrder")
+    // ... run the code under test using golden as the DB ...
+    golden.AssertGolden(t, "TestCreateOrder")
+}
+```
+
+Volatile values (timestamps, UUIDs, sequence-style IDs) are normalized to placeholders so transcripts compare cleanly across runs. Use `go test -overwrite-golden` to refresh the baseline after intentional behavior changes.
+
+`EnableGolden` and `EnableAssertPlan` each return a fresh `*DB`, so they don't compose on a single instance — pick one per scenario depending on whether you need plan stability or behavioral stability.
+
 ### How do I test error conditions?
 
 Test various error scenarios to ensure robust error handling:

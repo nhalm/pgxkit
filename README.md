@@ -318,6 +318,30 @@ func TestUserQueries(t *testing.T) {
 }
 ```
 
+### Golden Transcript Testing
+
+```go
+func TestCreateOrder(t *testing.T) {
+    testDB := pgxkit.NewTestDB()
+    ctx := context.Background()
+    err := testDB.Connect(ctx, "")
+    if err != nil {
+        t.Skip("Test database not available")
+    }
+    defer testDB.Shutdown(ctx)
+    defer pgxkit.CleanupGolden("TestCreateOrder")
+
+    // Captures BEGIN/QUERY/COMMIT/ROLLBACK events with normalized args and rows.
+    golden := testDB.EnableGolden("TestCreateOrder")
+
+    // ... call the code under test using golden as the DB ...
+
+    // Writes testdata/golden/TestCreateOrder.json on first run; diffs the
+    // transcript on subsequent runs. Use `go test -overwrite-golden` to refresh.
+    golden.AssertGolden(t, "TestCreateOrder")
+}
+```
+
 ## Type Helpers
 
 Seamless conversions between Go types and pgx types:
