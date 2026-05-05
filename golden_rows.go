@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"reflect"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -148,132 +147,20 @@ func (r *replayRow) Scan(dest ...any) error {
 	return r.rows.Scan(dest...)
 }
 
-// assignReplay assigns src to dst, handling the common pgx-style destination
-// kinds plus a reflect-based fallback for assignable types.
+// assignReplay assigns src to dst for the test-only replay path. sql.Scanner
+// destinations get the raw decoded value; everything else goes through
+// reflect-based assign-or-convert. Numeric width/sign conversions follow Go's
+// normal conversion rules (silent truncation/overflow), same as a hand-rolled
+// type switch.
 func assignReplay(dst, src any, colName string) error {
 	if dst == nil {
 		return fmt.Errorf("replayRows: nil destination for column %q", colName)
 	}
-
 	if scanner, ok := dst.(sql.Scanner); ok {
 		return scanner.Scan(src)
 	}
-
-	switch d := dst.(type) {
-	case *any:
+	if d, ok := dst.(*any); ok {
 		*d = src
-		return nil
-	case *string:
-		s, err := toString(src)
-		if err != nil {
-			return scanErr(colName, src, dst, err)
-		}
-		*d = s
-		return nil
-	case *[]byte:
-		b, ok := src.([]byte)
-		if !ok {
-			return scanErr(colName, src, dst, nil)
-		}
-		*d = b
-		return nil
-	case *bool:
-		b, ok := src.(bool)
-		if !ok {
-			return scanErr(colName, src, dst, nil)
-		}
-		*d = b
-		return nil
-	case *time.Time:
-		t, ok := src.(time.Time)
-		if !ok {
-			return scanErr(colName, src, dst, nil)
-		}
-		*d = t
-		return nil
-	case *float32:
-		f, err := toFloat64(src)
-		if err != nil {
-			return scanErr(colName, src, dst, err)
-		}
-		*d = float32(f)
-		return nil
-	case *float64:
-		f, err := toFloat64(src)
-		if err != nil {
-			return scanErr(colName, src, dst, err)
-		}
-		*d = f
-		return nil
-	case *int:
-		n, err := toInt64(src)
-		if err != nil {
-			return scanErr(colName, src, dst, err)
-		}
-		*d = int(n)
-		return nil
-	case *int8:
-		n, err := toInt64(src)
-		if err != nil {
-			return scanErr(colName, src, dst, err)
-		}
-		*d = int8(n)
-		return nil
-	case *int16:
-		n, err := toInt64(src)
-		if err != nil {
-			return scanErr(colName, src, dst, err)
-		}
-		*d = int16(n)
-		return nil
-	case *int32:
-		n, err := toInt64(src)
-		if err != nil {
-			return scanErr(colName, src, dst, err)
-		}
-		*d = int32(n)
-		return nil
-	case *int64:
-		n, err := toInt64(src)
-		if err != nil {
-			return scanErr(colName, src, dst, err)
-		}
-		*d = n
-		return nil
-	case *uint:
-		n, err := toUint64(src)
-		if err != nil {
-			return scanErr(colName, src, dst, err)
-		}
-		*d = uint(n)
-		return nil
-	case *uint8:
-		n, err := toUint64(src)
-		if err != nil {
-			return scanErr(colName, src, dst, err)
-		}
-		*d = uint8(n)
-		return nil
-	case *uint16:
-		n, err := toUint64(src)
-		if err != nil {
-			return scanErr(colName, src, dst, err)
-		}
-		*d = uint16(n)
-		return nil
-	case *uint32:
-		n, err := toUint64(src)
-		if err != nil {
-			return scanErr(colName, src, dst, err)
-		}
-		*d = uint32(n)
-		return nil
-	case *uint64:
-		n, err := toUint64(src)
-		if err != nil {
-			return scanErr(colName, src, dst, err)
-		}
-		*d = n
 		return nil
 	}
 
@@ -296,86 +183,4 @@ func assignReplay(dst, src any, colName string) error {
 		return nil
 	}
 	return fmt.Errorf("replayRows: cannot scan column %q (%T) into %T", colName, src, dst)
-}
-
-func scanErr(colName string, src, dst any, cause error) error {
-	if cause != nil {
-		return fmt.Errorf("replayRows: cannot scan column %q (%T) into %T: %w", colName, src, dst, cause)
-	}
-	return fmt.Errorf("replayRows: cannot scan column %q (%T) into %T", colName, src, dst)
-}
-
-func toInt64(src any) (int64, error) {
-	switch v := src.(type) {
-	case int:
-		return int64(v), nil
-	case int8:
-		return int64(v), nil
-	case int16:
-		return int64(v), nil
-	case int32:
-		return int64(v), nil
-	case int64:
-		return v, nil
-	case uint:
-		return int64(v), nil
-	case uint8:
-		return int64(v), nil
-	case uint16:
-		return int64(v), nil
-	case uint32:
-		return int64(v), nil
-	case uint64:
-		return int64(v), nil
-	}
-	return 0, fmt.Errorf("not an integer (%T)", src)
-}
-
-func toUint64(src any) (uint64, error) {
-	switch v := src.(type) {
-	case int:
-		return uint64(v), nil
-	case int8:
-		return uint64(v), nil
-	case int16:
-		return uint64(v), nil
-	case int32:
-		return uint64(v), nil
-	case int64:
-		return uint64(v), nil
-	case uint:
-		return uint64(v), nil
-	case uint8:
-		return uint64(v), nil
-	case uint16:
-		return uint64(v), nil
-	case uint32:
-		return uint64(v), nil
-	case uint64:
-		return v, nil
-	}
-	return 0, fmt.Errorf("not an integer (%T)", src)
-}
-
-func toFloat64(src any) (float64, error) {
-	switch v := src.(type) {
-	case float32:
-		return float64(v), nil
-	case float64:
-		return v, nil
-	}
-	if n, err := toInt64(src); err == nil {
-		return float64(n), nil
-	}
-	return 0, fmt.Errorf("not a float (%T)", src)
-}
-
-func toString(src any) (string, error) {
-	switch v := src.(type) {
-	case string:
-		return v, nil
-	case []byte:
-		return string(v), nil
-	}
-	return "", fmt.Errorf("not a string (%T)", src)
 }
