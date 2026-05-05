@@ -379,10 +379,13 @@ func RequireDB(t *testing.T) *TestDB {
 	return testDB
 }
 
-// CleanupPlan removes all plan-regression files for the specified test name.
-// This includes both the captured query plan file and its baseline file
-// from the testdata/plans directory.
-func CleanupPlan(testName string) error {
+// cleanupPlan removes all plan-regression files for the specified test name —
+// both the captured plan file and its baseline. Used internally by pgxkit's
+// own tests so generated baselines don't pollute the repo. Not part of the
+// public API: end users should let baselines persist (that's the whole point
+// of plan-regression testing) and remove a baseline file by hand if they
+// want to invalidate it.
+func cleanupPlan(testName string) error {
 	if testName == "" {
 		return nil
 	}

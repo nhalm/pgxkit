@@ -102,7 +102,7 @@ func TestAssertPlan(t *testing.T) {
 	planDB.AssertPlan(t, "TestAssertPlan")
 
 	// Clean up
-	defer CleanupPlan("TestAssertPlan")
+	defer cleanupPlan("TestAssertPlan")
 }
 
 func TestCleanupPlan(t *testing.T) {
@@ -133,9 +133,9 @@ func TestCleanupPlan(t *testing.T) {
 	defer os.Chdir(originalDir)
 
 	// Test cleanup
-	err := CleanupPlan("TestCleanup")
+	err := cleanupPlan("TestCleanup")
 	if err != nil {
-		t.Errorf("CleanupPlan should not return error: %v", err)
+		t.Errorf("cleanupPlan should not return error: %v", err)
 	}
 
 	// Verify files were removed
@@ -197,7 +197,7 @@ func TestPlanDML(t *testing.T) {
 
 	t.Run("insert", func(t *testing.T) {
 		planDB := testDB.EnableAssertPlan("TestPlanDML_Insert")
-		defer CleanupPlan("TestPlanDML_Insert")
+		defer cleanupPlan("TestPlanDML_Insert")
 
 		var id int
 		err := planDB.QueryRow(ctx, `
@@ -218,7 +218,7 @@ func TestPlanDML(t *testing.T) {
 
 	t.Run("update", func(t *testing.T) {
 		planDB := testDB.EnableAssertPlan("TestPlanDML_Update")
-		defer CleanupPlan("TestPlanDML_Update")
+		defer cleanupPlan("TestPlanDML_Update")
 
 		_, err := planDB.Exec(ctx, `
 			UPDATE plan_test_users
@@ -234,7 +234,7 @@ func TestPlanDML(t *testing.T) {
 
 	t.Run("delete", func(t *testing.T) {
 		planDB := testDB.EnableAssertPlan("TestPlanDML_Delete")
-		defer CleanupPlan("TestPlanDML_Delete")
+		defer cleanupPlan("TestPlanDML_Delete")
 
 		_, err := planDB.Exec(ctx, `
 			DELETE FROM plan_test_users
@@ -272,7 +272,7 @@ func TestPlanCTE(t *testing.T) {
 
 	t.Run("cte_select", func(t *testing.T) {
 		planDB := testDB.EnableAssertPlan("TestPlanCTE_Select")
-		defer CleanupPlan("TestPlanCTE_Select")
+		defer cleanupPlan("TestPlanCTE_Select")
 
 		rows, err := planDB.Query(ctx, `
 			WITH numbered AS (
@@ -291,7 +291,7 @@ func TestPlanCTE(t *testing.T) {
 
 	t.Run("cte_insert", func(t *testing.T) {
 		planDB := testDB.EnableAssertPlan("TestPlanCTE_Insert")
-		defer CleanupPlan("TestPlanCTE_Insert")
+		defer cleanupPlan("TestPlanCTE_Insert")
 
 		_, err := planDB.Exec(ctx, `
 			WITH vals AS (
@@ -356,5 +356,5 @@ func TestTestDBIntegration(t *testing.T) {
 	planDB.AssertPlan(t, "TestIntegration")
 
 	// Clean up plan files
-	defer CleanupPlan("TestIntegration")
+	defer cleanupPlan("TestIntegration")
 }
