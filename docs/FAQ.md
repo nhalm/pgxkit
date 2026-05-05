@@ -267,8 +267,6 @@ func NewTestSuite(t *testing.T) *TestSuite {
 
 Plan-regression testing captures the structural query plan via `EXPLAIN (FORMAT JSON, COSTS OFF)` and asserts it is unchanged across runs. It catches plan shape changes that often correlate with performance regressions: a seq-scan replacing an index-scan, a nested-loop turning into a hash-join, a new sort node appearing, or a different join order. It does NOT compare query result rows — assert those yourself in the test body.
 
-(Note: this is distinct from a future transcript-based "Golden" feature tracked in issue #69. The "Golden" name is reserved for that.)
-
 ```go
 func TestComplexQuery_Plan(t *testing.T) {
     testDB := setupTestDB(t)
