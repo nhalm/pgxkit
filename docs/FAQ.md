@@ -27,7 +27,7 @@ pgxkit is a **tool-agnostic** PostgreSQL toolkit that provides production-ready 
 **Key differences:**
 - **Safety first** - Uses write pool by default, explicit read optimization
 - **Extensible hooks** - Add logging, metrics, tracing without changing your queries
-- **Golden testing** - Performance regression detection for your queries
+- **Plan-regression testing** - Catches query plan shape changes (e.g. seq-scan to index-scan)
 - **Production features** - Retry logic, graceful shutdown, health checks built-in
 
 ### Should I use pgxkit instead of pgx directly?
@@ -36,7 +36,7 @@ pgxkit is built **on top of** pgx, not instead of it. You get all the benefits o
 
 - Connection pool abstraction with read/write splitting
 - Hook system for observability
-- Testing utilities including golden tests
+- Testing utilities including plan-regression tests
 - Retry logic for transient failures
 - Production-ready lifecycle management
 
@@ -263,16 +263,16 @@ func NewTestSuite(t *testing.T) *TestSuite {
 }
 ```
 
-### What are golden tests and when should I use them?
+### What is plan-regression testing and when should I use it?
 
-Golden tests capture and compare query execution plans for SELECT, INSERT, UPDATE, and DELETE queries to detect performance regressions. DML operations are executed in rolled-back transactions to avoid side effects:
+Plan-regression testing captures the structural query plan via `EXPLAIN (FORMAT JSON, COSTS OFF)` and asserts it is unchanged across runs. It catches plan shape changes that often correlate with performance regressions: a seq-scan replacing an index-scan, a nested-loop turning into a hash-join, a new sort node appearing, or a different join order. It does NOT compare query result rows — assert those yourself in the test body.
 
 ```go
-func TestComplexQuery_Golden(t *testing.T) {
+func TestComplexQuery_Plan(t *testing.T) {
     testDB := setupTestDB(t)
-    db := testDB.EnableGolden("TestComplexQuery")
+    db := testDB.EnableAssertPlan("TestComplexQuery")
 
-    // Query plan will be captured automatically
+    // Structural query plan will be captured and asserted
     rows, err := db.Query(ctx, `
         SELECT u.id, u.name, COUNT(o.id) as order_count
         FROM users u
@@ -285,12 +285,12 @@ func TestComplexQuery_Golden(t *testing.T) {
 }
 ```
 
-**Use golden tests for:**
-- Critical SELECT queries that must maintain performance
+**Use plan-regression tests for:**
+- Critical SELECT queries whose plan shape must remain stable
 - Complex queries with multiple joins
 - INSERT/UPDATE/DELETE operations with complex WHERE clauses
-- Queries that use indexes heavily
-- Performance regression detection in CI/CD
+- Queries that depend on specific index usage
+- Catching unintentional plan changes in CI/CD
 
 ### How do I test error conditions?
 

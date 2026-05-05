@@ -184,7 +184,7 @@ func TestDB_Connect_WithInvalidDSN_ReturnsError(t *testing.T) {
 
 1. **Unit Tests** - Test individual functions in isolation
 2. **Integration Tests** - Test interactions with real database
-3. **Golden Tests** - Test performance regression detection
+3. **Plan-Regression Tests** - Detect query plan shape changes
 4. **Benchmark Tests** - Measure performance characteristics
 
 ### Writing Good Tests
@@ -244,15 +244,15 @@ func BenchmarkDB_Query(b *testing.B) {
 }
 ```
 
-#### Golden Tests
-Use golden tests for query plan regression detection:
+#### Plan-Regression Tests
+Use plan-regression tests to catch query plan shape changes (e.g. seq-scan to index-scan, nested-loop to hash-join, a new sort node, a different join order). The captured plan comes from `EXPLAIN (FORMAT JSON, COSTS OFF)`; result rows are not compared.
 
 ```go
-func TestComplexQuery_Golden(t *testing.T) {
+func TestComplexQuery_Plan(t *testing.T) {
     testDB := setupTestDB(t)
-    db := testDB.EnableGolden("TestComplexQuery")
-    
-    // Query plan will be captured and compared
+    db := testDB.EnableAssertPlan("TestComplexQuery")
+
+    // Structural query plan will be captured and asserted
     rows, err := db.Query(ctx, complexQuery)
     require.NoError(t, err)
     defer rows.Close()

@@ -22,7 +22,7 @@ pgxkit is a **tool-agnostic** PostgreSQL toolkit that works with any approach to
 - 🔄 **Read/Write Pool Abstraction** - Safe by default, optimized when needed
 - 🎣 **Extensible Hook System** - Add logging, tracing, metrics, circuit breakers
 - 🔁 **Smart Retry Logic** - PostgreSQL-aware error detection and exponential backoff
-- 🧪 **Testing Infrastructure** - Golden test support for performance regression detection
+- 🧪 **Testing Infrastructure** - Plan-regression test support to catch query plan changes
 - 🔧 **Type Helpers** - Seamless pgx type conversions
 - 📊 **Health Checks** - Built-in database connectivity monitoring
 - 🛡️ **Graceful Shutdown** - Production-ready lifecycle management
@@ -289,7 +289,7 @@ func TestUserOperations(t *testing.T) {
 }
 ```
 
-### Golden Testing (Performance Regression Detection)
+### Plan-Regression Testing
 
 ```go
 func TestUserQueries(t *testing.T) {
@@ -304,15 +304,17 @@ func TestUserQueries(t *testing.T) {
     testDB.Setup()
     defer testDB.Clean()
 
-    // Enable golden test hooks - captures EXPLAIN plans automatically
-    db := testDB.EnableGolden("TestUserQueries")
+    // Enable plan-regression hooks - captures EXPLAIN (FORMAT JSON, COSTS OFF) plans automatically
+    db := testDB.EnableAssertPlan("TestUserQueries")
 
-    // These queries will have their EXPLAIN plans captured
+    // These queries will have their structural plans captured
     rows, err := db.Query(ctx, "SELECT * FROM users WHERE active = true")
     // ... more queries
 
-    // Plans are saved to testdata/golden/TestUserQueries_query_1.json, etc.
-    // Future runs compare plans to detect performance regressions
+    // Plans are saved to testdata/plans/TestUserQueries_query_1.json, etc.
+    // Future runs assert the plan shape is unchanged (e.g. seq-scan vs index-scan,
+    // nested-loop vs hash-join, new sort node, different join order).
+    // This does NOT assert anything about query result rows.
 }
 ```
 
@@ -455,7 +457,7 @@ err := db.Connect(ctx, dsn,
 - **[Examples](../../wiki/Examples)** - Practical code examples and use cases
 - **[Performance Guide](../../wiki/Performance-Guide)** - Optimization strategies
 - **[Production Guide](../../wiki/Production-Guide)** - Deployment best practices
-- **[Testing Guide](../../wiki/Testing-Guide)** - Testing strategies and golden tests
+- **[Testing Guide](../../wiki/Testing-Guide)** - Testing strategies and plan-regression tests
 - **[FAQ](../../wiki/FAQ)** - Frequently asked questions
 
 ## Contributing
