@@ -141,11 +141,11 @@ func (g *assertPlanHook) captureExplainPlan(ctx context.Context, sql string, arg
 		return nil
 	}
 
-	if !(strings.HasPrefix(upperSQL, "SELECT") ||
-		strings.HasPrefix(upperSQL, "INSERT") ||
-		strings.HasPrefix(upperSQL, "UPDATE") ||
-		strings.HasPrefix(upperSQL, "DELETE") ||
-		strings.HasPrefix(upperSQL, "WITH")) {
+	if !strings.HasPrefix(upperSQL, "SELECT") &&
+		!strings.HasPrefix(upperSQL, "INSERT") &&
+		!strings.HasPrefix(upperSQL, "UPDATE") &&
+		!strings.HasPrefix(upperSQL, "DELETE") &&
+		!strings.HasPrefix(upperSQL, "WITH") {
 		return nil
 	}
 
