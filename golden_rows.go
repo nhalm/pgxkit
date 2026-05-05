@@ -278,7 +278,7 @@ func assignReplay(dst, src any, colName string) error {
 	}
 
 	dv := reflect.ValueOf(dst)
-	if dv.Kind() != reflect.Ptr || dv.IsNil() {
+	if dv.Kind() != reflect.Pointer || dv.IsNil() {
 		return fmt.Errorf("replayRows: destination for column %q is not a non-nil pointer", colName)
 	}
 	target := dv.Elem()
