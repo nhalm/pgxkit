@@ -870,7 +870,6 @@ func TestCreateOrder(t *testing.T) {
         t.Skip("Test database not available:", err)
     }
     defer testDB.Shutdown(ctx)
-    defer pgxkit.CleanupGolden("TestCreateOrder")
 
     golden := testDB.EnableGolden("TestCreateOrder")
     // ... call the code under test using golden as the DB ...
@@ -897,14 +896,6 @@ func (db *DB) AssertGolden(t *testing.T, testName string)
 ```
 
 Compares the captured transcript against `testdata/golden/<testName>.json`. On the first run (or with the `-overwrite-golden` flag) it writes the baseline and logs that fact. On subsequent runs it fails the test with a unified diff if the transcript has changed. `testName` must match the name passed to `EnableGolden`.
-
-### CleanupGolden
-
-```go
-func CleanupGolden(testName string) error
-```
-
-Removes the golden transcript file for the named scenario from `testdata/golden/`. Tests that create golden files should defer this call to keep the repository clean of throwaway baselines.
 
 ## Utility Functions
 

@@ -58,8 +58,8 @@ func TestGolden_FirstRunCreatesBaseline(t *testing.T) {
 	}
 	withGoldenSchema(t, testDB, "golden_first_run")
 	const name = "TestGolden_FirstRunCreatesBaseline"
-	defer CleanupGolden(name)
-	_ = CleanupGolden(name)
+	defer cleanupGolden(name)
+	_ = cleanupGolden(name)
 
 	ctx := context.Background()
 	g := testDB.EnableGolden(name)
@@ -85,8 +85,8 @@ func TestGolden_SecondRunNoDiff(t *testing.T) {
 	}
 	withGoldenSchema(t, testDB, "golden_second_run")
 	const name = "TestGolden_SecondRunNoDiff"
-	defer CleanupGolden(name)
-	_ = CleanupGolden(name)
+	defer cleanupGolden(name)
+	_ = cleanupGolden(name)
 
 	ctx := context.Background()
 	for run := 0; run < 2; run++ {
@@ -114,8 +114,8 @@ func TestGolden_FailsOnExtraQuery(t *testing.T) {
 	}
 	withGoldenSchema(t, testDB, "golden_extra")
 	const name = "TestGolden_FailsOnExtraQuery"
-	defer CleanupGolden(name)
-	_ = CleanupGolden(name)
+	defer cleanupGolden(name)
+	_ = cleanupGolden(name)
 
 	ctx := context.Background()
 
@@ -153,8 +153,8 @@ func TestGolden_FailsOnDifferentArgs(t *testing.T) {
 	}
 	withGoldenSchema(t, testDB, "golden_diff_args")
 	const name = "TestGolden_FailsOnDifferentArgs"
-	defer CleanupGolden(name)
-	_ = CleanupGolden(name)
+	defer cleanupGolden(name)
+	_ = cleanupGolden(name)
 
 	ctx := context.Background()
 
@@ -181,8 +181,8 @@ func TestGolden_FailsOnDifferentRow(t *testing.T) {
 	}
 	withGoldenSchema(t, testDB, "golden_diff_row")
 	const name = "TestGolden_FailsOnDifferentRow"
-	defer CleanupGolden(name)
-	_ = CleanupGolden(name)
+	defer cleanupGolden(name)
+	_ = cleanupGolden(name)
 
 	ctx := context.Background()
 
@@ -234,8 +234,8 @@ func TestGolden_FailsOnMissingExec(t *testing.T) {
 	}
 	withGoldenSchema(t, testDB, "golden_missing")
 	const name = "TestGolden_FailsOnMissingExec"
-	defer CleanupGolden(name)
-	_ = CleanupGolden(name)
+	defer cleanupGolden(name)
+	_ = cleanupGolden(name)
 
 	ctx := context.Background()
 
@@ -263,8 +263,8 @@ func TestGolden_FailsCommitToRollback(t *testing.T) {
 	}
 	withGoldenSchema(t, testDB, "golden_commit_rollback")
 	const name = "TestGolden_FailsCommitToRollback"
-	defer CleanupGolden(name)
-	_ = CleanupGolden(name)
+	defer cleanupGolden(name)
+	_ = cleanupGolden(name)
 
 	ctx := context.Background()
 
@@ -306,8 +306,8 @@ func TestGolden_TransactionPreservesOrder(t *testing.T) {
 	}
 	withGoldenSchema(t, testDB, "golden_tx_order")
 	const name = "TestGolden_TransactionPreservesOrder"
-	defer CleanupGolden(name)
-	_ = CleanupGolden(name)
+	defer cleanupGolden(name)
+	_ = cleanupGolden(name)
 
 	ctx := context.Background()
 	g := testDB.EnableGolden(name)
@@ -434,8 +434,8 @@ func TestGolden_DDLAndSetRecordedAsQuery(t *testing.T) {
 	}
 	const name = "TestGolden_DDLAndSet"
 	const table = "golden_ddl_set"
-	defer CleanupGolden(name)
-	_ = CleanupGolden(name)
+	defer cleanupGolden(name)
+	_ = cleanupGolden(name)
 	t.Cleanup(func() {
 		_, _ = testDB.Exec(context.Background(), "DROP TABLE IF EXISTS "+table)
 	})
@@ -476,8 +476,8 @@ func TestGolden_OverwriteFlagRegeneratesBaseline(t *testing.T) {
 	}
 	withGoldenSchema(t, testDB, "golden_overwrite")
 	const name = "TestGolden_OverwriteFlag"
-	defer CleanupGolden(name)
-	_ = CleanupGolden(name)
+	defer cleanupGolden(name)
+	_ = cleanupGolden(name)
 
 	ctx := context.Background()
 
@@ -537,7 +537,7 @@ func TestGolden_CleanupRemovesFile(t *testing.T) {
 	}
 	withGoldenSchema(t, testDB, "golden_cleanup")
 	const name = "TestGolden_CleanupRemovesFile"
-	_ = CleanupGolden(name)
+	_ = cleanupGolden(name)
 
 	ctx := context.Background()
 	g := testDB.EnableGolden(name)
@@ -546,14 +546,14 @@ func TestGolden_CleanupRemovesFile(t *testing.T) {
 	if !goldenFileExists(name) {
 		t.Fatalf("expected golden file to exist before cleanup")
 	}
-	if err := CleanupGolden(name); err != nil {
+	if err := cleanupGolden(name); err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
 	if goldenFileExists(name) {
-		t.Errorf("expected golden file to be removed after CleanupGolden")
+		t.Errorf("expected golden file to be removed after cleanupGolden")
 	}
-	if err := CleanupGolden(name); err != nil {
-		t.Errorf("CleanupGolden should be idempotent: %v", err)
+	if err := cleanupGolden(name); err != nil {
+		t.Errorf("cleanupGolden should be idempotent: %v", err)
 	}
 }
 
@@ -564,8 +564,8 @@ func TestGolden_QueryRowReturnsErrNoRowsOnEmpty(t *testing.T) {
 	}
 	withGoldenSchema(t, testDB, "golden_no_rows")
 	const name = "TestGolden_QueryRowEmpty"
-	defer CleanupGolden(name)
-	_ = CleanupGolden(name)
+	defer cleanupGolden(name)
+	_ = cleanupGolden(name)
 
 	ctx := context.Background()
 	g := testDB.EnableGolden(name)

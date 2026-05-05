@@ -574,7 +574,6 @@ This complements [Plan-Regression Testing](#plan-regression-testing): plan-regre
 ```go
 func TestCreateOrder(t *testing.T) {
     testDB := pgxkit.RequireDB(t)
-    defer pgxkit.CleanupGolden("TestCreateOrder")
 
     golden := testDB.EnableGolden("TestCreateOrder")
 

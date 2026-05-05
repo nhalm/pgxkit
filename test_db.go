@@ -127,10 +127,13 @@ func (db *DB) assertGolden(t goldenT, testName string) {
 	assertGolden(t, db.recorder)
 }
 
-// CleanupGolden removes the golden transcript file for the named scenario.
-// Tests that create golden files should defer this call so the file does
-// not survive an isolated test run.
-func CleanupGolden(testName string) error {
+// cleanupGolden removes the golden transcript file for the named scenario.
+// Used internally by pgxkit's own tests so generated baselines don't pollute
+// the repo. Not part of the public API — end users should let baselines
+// persist across runs (that's the whole point of golden testing) and use
+// the -overwrite-golden flag to regenerate, or `rm` the file directly to
+// invalidate it.
+func cleanupGolden(testName string) error {
 	if testName == "" {
 		return nil
 	}

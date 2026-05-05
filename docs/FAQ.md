@@ -303,7 +303,6 @@ They answer different questions, and pgxkit ships both.
 ```go
 func TestCreateOrder(t *testing.T) {
     testDB := pgxkit.RequireDB(t)
-    defer pgxkit.CleanupGolden("TestCreateOrder")
 
     golden := testDB.EnableGolden("TestCreateOrder")
     // ... run the code under test using golden as the DB ...

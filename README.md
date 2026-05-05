@@ -329,7 +329,6 @@ func TestCreateOrder(t *testing.T) {
         t.Skip("Test database not available")
     }
     defer testDB.Shutdown(ctx)
-    defer pgxkit.CleanupGolden("TestCreateOrder")
 
     // Captures BEGIN/QUERY/COMMIT/ROLLBACK events with normalized args and rows.
     golden := testDB.EnableGolden("TestCreateOrder")

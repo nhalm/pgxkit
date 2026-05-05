@@ -580,7 +580,6 @@ func TestCreateOrder(t *testing.T) {
         t.Skip("Test database not available")
     }
     defer testDB.Shutdown(ctx)
-    defer pgxkit.CleanupGolden("TestCreateOrder")
 
     golden := testDB.EnableGolden("TestCreateOrder")
 
