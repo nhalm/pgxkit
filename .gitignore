@@ -5,6 +5,9 @@
 *.so
 *.dylib
 
+# Project-local tool installs (golangci-lint pinned by Makefile)
+bin/
+
 # Test binary, built with `go test -c`
 *.test
 

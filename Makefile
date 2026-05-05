@@ -11,6 +11,14 @@ TEST_DATABASE_URL = postgres://postgres:postgres@localhost:$(TEST_DB_PORT)/testd
 
 GO_TEST_FLAGS ?= -v -race -parallel=1
 
+# Pinned per-project so local and CI run the exact same binary regardless of
+# whatever golangci-lint anyone has installed globally. Bump by editing the
+# version, then `make lint` installs it on next invocation.
+GOLANGCI_VERSION := v2.12.1
+LOCAL_BIN        := $(CURDIR)/bin
+GOLANGCI         := $(LOCAL_BIN)/golangci-lint
+GOLANGCI_STAMP   := $(LOCAL_BIN)/.golangci-lint-$(GOLANGCI_VERSION)
+
 .PHONY: help test-db-up test-db-down test test-coverage coverage-html lint bench
 
 help: ## Show available targets
@@ -32,8 +40,15 @@ test-coverage: test-db-up ## Run the test suite and write coverage.out
 coverage-html: ## Open coverage.out in the browser (run after test-coverage)
 	go tool cover -html=coverage.out
 
-lint: ## Run golangci-lint
-	golangci-lint run --timeout=5m
+# Stamp file embeds the version, so bumping GOLANGCI_VERSION rebuilds the bin.
+$(GOLANGCI_STAMP):
+	@mkdir -p $(LOCAL_BIN)
+	@rm -f $(LOCAL_BIN)/.golangci-lint-* $(GOLANGCI)
+	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/$(GOLANGCI_VERSION)/install.sh | sh -s -- -b $(LOCAL_BIN) $(GOLANGCI_VERSION)
+	@touch $(GOLANGCI_STAMP)
+
+lint: $(GOLANGCI_STAMP) ## Run pinned golangci-lint
+	$(GOLANGCI) run --timeout=5m
 
 bench: test-db-up ## Run benchmarks against the local test DB
 	@TEST_DATABASE_URL="$(TEST_DATABASE_URL)" go test -bench=. -benchmem -run=^$$ ./...
