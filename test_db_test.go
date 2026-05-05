@@ -178,17 +178,22 @@ func TestGoldenDML(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Create a temporary table for DML testing
+	// Use a regular table (not TEMP) so it's visible across pool connections —
+	// EnableGolden returns a *DB sharing the pool, and DML may execute on a
+	// different connection than the CREATE.
 	_, err := testDB.Exec(ctx, `
-		CREATE TEMP TABLE golden_test_users (
+		CREATE TABLE IF NOT EXISTS golden_test_users (
 			id SERIAL PRIMARY KEY,
 			name TEXT NOT NULL,
 			email TEXT
 		)
 	`)
 	if err != nil {
-		t.Fatalf("Failed to create temp table: %v", err)
+		t.Fatalf("Failed to create test table: %v", err)
 	}
+	t.Cleanup(func() {
+		_, _ = testDB.Exec(context.Background(), "DROP TABLE IF EXISTS golden_test_users")
+	})
 
 	t.Run("insert", func(t *testing.T) {
 		goldenDB := testDB.EnableGolden("TestGoldenDML_Insert")
@@ -251,16 +256,19 @@ func TestGoldenCTE(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Create temp table
+	// Regular table — see TestGoldenDML for why TEMP doesn't work here.
 	_, err := testDB.Exec(ctx, `
-		CREATE TEMP TABLE golden_cte_test (
+		CREATE TABLE IF NOT EXISTS golden_cte_test (
 			id SERIAL PRIMARY KEY,
 			value INT
 		)
 	`)
 	if err != nil {
-		t.Fatalf("Failed to create temp table: %v", err)
+		t.Fatalf("Failed to create test table: %v", err)
 	}
+	t.Cleanup(func() {
+		_, _ = testDB.Exec(context.Background(), "DROP TABLE IF EXISTS golden_cte_test")
+	})
 
 	t.Run("cte_select", func(t *testing.T) {
 		goldenDB := testDB.EnableGolden("TestGoldenCTE_Select")

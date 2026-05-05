@@ -156,7 +156,7 @@ func TestTransactionRollbackOnError(t *testing.T) {
 }
 
 func TestGracefulShutdownWaitsForTransaction(t *testing.T) {
-	pool := requireTestPool(t)
+	pool := newIsolatedTestPool(t)
 	ctx := context.Background()
 
 	db := NewDB()
@@ -167,7 +167,15 @@ func TestGracefulShutdownWaitsForTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test table: %v", err)
 	}
-	defer CleanupTestData("DROP TABLE IF EXISTS tx_test_shutdown")
+	t.Cleanup(func() {
+		shared := getTestPool()
+		if shared == nil {
+			return
+		}
+		if _, err := shared.Exec(context.Background(), "DROP TABLE IF EXISTS tx_test_shutdown"); err != nil {
+			t.Logf("cleanup DROP TABLE failed: %v", err)
+		}
+	})
 
 	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -205,8 +213,9 @@ func TestGracefulShutdownWaitsForTransaction(t *testing.T) {
 		t.Fatal("Shutdown did not complete after transaction finished")
 	}
 
+	verifyPool := requireTestPool(t)
 	var value string
-	err = pool.QueryRow(ctx, `SELECT value FROM tx_test_shutdown WHERE value = $1`, "during_shutdown").Scan(&value)
+	err = verifyPool.QueryRow(ctx, `SELECT value FROM tx_test_shutdown WHERE value = $1`, "during_shutdown").Scan(&value)
 	if err != nil {
 		t.Fatalf("Failed to verify committed data: %v", err)
 	}
@@ -216,10 +225,10 @@ func TestGracefulShutdownWaitsForTransaction(t *testing.T) {
 }
 
 func TestActiveOpsTracking(t *testing.T) {
-	pool := requireTestPool(t)
 	ctx := context.Background()
 
 	t.Run("increments on BeginTx and decrements on Commit", func(t *testing.T) {
+		pool := newIsolatedTestPool(t)
 		db := NewDB()
 		db.readPool = pool
 		db.writePool = pool
@@ -256,6 +265,7 @@ func TestActiveOpsTracking(t *testing.T) {
 	})
 
 	t.Run("increments on BeginTx and decrements on Rollback", func(t *testing.T) {
+		pool := newIsolatedTestPool(t)
 		db := NewDB()
 		db.readPool = pool
 		db.writePool = pool

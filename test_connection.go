@@ -66,6 +66,32 @@ func requireTestPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
+// newIsolatedTestPool returns a fresh pool that the test owns. Use this when
+// the test needs to call Close/Shutdown — borrowing the shared pool from
+// requireTestPool would close it for every later test.
+func newIsolatedTestPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	dbURL := os.Getenv("TEST_DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("TEST_DATABASE_URL not set, skipping integration test")
+	}
+
+	ctx := context.Background()
+	config, err := pgxpool.ParseConfig(dbURL)
+	if err != nil {
+		t.Fatalf("Failed to parse TEST_DATABASE_URL: %v", err)
+	}
+	config.MaxConns = 5
+	config.MinConns = 1
+
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatalf("Failed to create isolated test pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
 // CleanupTestData executes cleanup SQL statements on the shared test database
 func CleanupTestData(sqlStatements ...string) {
 	pool := getTestPool()

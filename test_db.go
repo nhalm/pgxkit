@@ -153,18 +153,21 @@ func (g *goldenTestHook) captureExplainPlan(ctx context.Context, sql string, arg
 		return nil
 	}
 
-	upperSQL := strings.ToUpper(strings.TrimSpace(sql))
+	// Collapse runs of whitespace to single spaces so token boundary searches
+	// (`" SELECT "` etc.) match across raw-string SQL that contains tabs and
+	// newlines around keywords.
+	upperSQL := " " + strings.Join(strings.Fields(strings.ToUpper(sql)), " ") + " "
 
-	if strings.HasPrefix(upperSQL, "EXPLAIN") {
+	if strings.HasPrefix(upperSQL, " EXPLAIN ") {
 		return nil
 	}
 
-	isSelect := strings.HasPrefix(upperSQL, "SELECT")
-	isDML := strings.HasPrefix(upperSQL, "INSERT") ||
-		strings.HasPrefix(upperSQL, "UPDATE") ||
-		strings.HasPrefix(upperSQL, "DELETE")
+	isSelect := strings.HasPrefix(upperSQL, " SELECT ")
+	isDML := strings.HasPrefix(upperSQL, " INSERT ") ||
+		strings.HasPrefix(upperSQL, " UPDATE ") ||
+		strings.HasPrefix(upperSQL, " DELETE ")
 
-	if strings.HasPrefix(upperSQL, "WITH") {
+	if strings.HasPrefix(upperSQL, " WITH ") {
 		lastSelect := strings.LastIndex(upperSQL, " SELECT ")
 		lastInsert := strings.LastIndex(upperSQL, " INSERT ")
 		lastUpdate := strings.LastIndex(upperSQL, " UPDATE ")

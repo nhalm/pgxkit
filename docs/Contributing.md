@@ -19,10 +19,10 @@ Thank you for your interest in contributing to pgxkit! This guide will help you 
 
 ### Prerequisites
 
-- Go 1.21 or later
-- PostgreSQL 12 or later (for testing)
+- Go 1.25 or later
+- Docker (for the local test database)
 - Git
-- Make (optional, for convenience commands)
+- Make
 
 ### Repository Structure
 
@@ -53,40 +53,44 @@ cd pgxkit
 ### 2. Set Up Development Environment
 
 ```bash
-# Install dependencies
 go mod download
-
-# Set up test database
-export TEST_POSTGRES_HOST=localhost
-export TEST_POSTGRES_PORT=5432
-export TEST_POSTGRES_USER=postgres
-export TEST_POSTGRES_PASSWORD=yourpassword
-export TEST_POSTGRES_DB=pgxkit_test
-export TEST_POSTGRES_SSLMODE=disable
 ```
 
 ### 3. Run Tests
 
+The `Makefile` is the canonical entry point — it spins up a containerized
+Postgres, exports the right `TEST_DATABASE_URL`, and runs the suite the same
+way CI does. Always use it instead of invoking `go test` directly.
+
 ```bash
-# Run all tests
-go test ./...
-
-# Run tests with coverage
-go test -race -coverprofile=coverage.out ./...
-go tool cover -html=coverage.out
-
-# Run specific test
-go test -run TestSpecificFunction ./...
+make test-db-up    # start Postgres (Docker assigns a free host port)
+make test          # run the full suite
+make test-db-down  # tear down when done
 ```
+
+Other useful targets:
+
+```bash
+make test-coverage   # writes coverage.out
+make coverage-html   # open the HTML coverage report
+make bench           # run benchmarks
+make lint            # run golangci-lint
+make help            # list all targets
+```
+
+If you want to point the suite at an existing Postgres instance instead of the
+Docker one, set `TEST_DATABASE_URL` directly and run `go test ./...`.
 
 ### 4. Run Linting
 
 ```bash
-# Install golangci-lint if not already installed
-go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+make lint
+```
 
-# Run linting
-golangci-lint run
+Install `golangci-lint` first if you don't have it:
+
+```bash
+go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 ```
 
 ## Code Standards
@@ -261,12 +265,12 @@ func TestComplexQuery_Golden(t *testing.T) {
 
 1. **Run all tests locally**
    ```bash
-   go test ./...
+   make test
    ```
 
 2. **Run linting**
    ```bash
-   golangci-lint run
+   make lint
    ```
 
 3. **Update documentation** if needed
