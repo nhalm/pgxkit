@@ -11,28 +11,10 @@ import (
 	"testing"
 )
 
-func toFloat64(v interface{}) float64 {
-	switch n := v.(type) {
-	case float64:
-		return n
-	case float32:
-		return float64(n)
-	case int:
-		return float64(n)
-	case int64:
-		return float64(n)
-	case json.Number:
-		f, _ := n.Float64()
-		return f
-	default:
-		return 0
-	}
-}
-
 // TestDB is a testing utility that wraps DB with testing-specific functionality.
-// It provides simple methods for test setup, cleanup, and golden test support.
-// TestDB automatically manages test database connections and provides utilities
-// for performance regression testing through golden tests.
+// It provides simple methods for test setup, cleanup, and plan-regression
+// assertion support. TestDB automatically manages test database connections
+// and offers utilities for catching query-plan changes between runs.
 type TestDB struct {
 	*DB
 }
@@ -99,93 +81,71 @@ func (tdb *TestDB) Clean() error {
 	return nil
 }
 
-// EnableGolden returns a new DB instance configured with golden test hooks.
-// Golden tests capture EXPLAIN ANALYZE output for each query, enabling detection
-// of query plan regressions. The testName is used to name the golden file.
-// Use AssertGolden after test execution to compare against baseline plans.
+// EnableAssertPlan returns a new DB instance configured to capture query
+// plans for plan-regression testing. For each eligible query, it issues an
+// EXPLAIN (FORMAT JSON, COSTS OFF) and records the structural plan so it
+// can be diffed against a baseline. The testName is used to name the plan
+// file under testdata/plans. Use AssertPlan after test execution to compare
+// captured plans against the baseline.
 //
 // Example:
 //
-//	goldenDB := testDB.EnableGolden("user_queries")
-//	// run queries using goldenDB
-//	goldenDB.AssertGolden(t, "user_queries")
-func (tdb *TestDB) EnableGolden(testName string) *DB {
-	goldenDB := &DB{
+//	planDB := testDB.EnableAssertPlan("user_queries")
+//	// run queries using planDB
+//	planDB.AssertPlan(t, "user_queries")
+func (tdb *TestDB) EnableAssertPlan(testName string) *DB {
+	planDB := &DB{
 		readPool:  tdb.readPool,
 		writePool: tdb.writePool,
 		hooks:     newHooks(),
 	}
 
-	goldenHook := &goldenTestHook{
+	planHook := &assertPlanHook{
 		testName:     testName,
 		queryCounter: 0,
 		mu:           sync.Mutex{},
-		db:           goldenDB,
+		db:           planDB,
 	}
 
-	goldenDB.hooks.addHook(BeforeOperation, goldenHook.captureExplainPlan)
+	planDB.hooks.addHook(BeforeOperation, planHook.captureExplainPlan)
 
-	return goldenDB
+	return planDB
 }
 
-// goldenTestHook handles golden test functionality
-type goldenTestHook struct {
+// assertPlanHook handles plan-regression assertion functionality.
+type assertPlanHook struct {
 	testName     string
 	queryCounter int
 	mu           sync.Mutex
 	db           *DB
 }
 
-// QueryPlan represents a captured query execution plan from EXPLAIN ANALYZE.
-// It stores the SQL statement, the full JSON plan output, and timing metrics
-// for use in golden test comparisons.
+// QueryPlan represents a captured structural query plan.
+// It stores the SQL statement and the JSON plan output for use in
+// plan-regression comparisons.
 type QueryPlan struct {
-	Query       int                      `json:"query"`
-	SQL         string                   `json:"sql"`
-	Plan        []map[string]interface{} `json:"plan"`
-	ExecutionMS float64                  `json:"execution_ms,omitempty"`
-	PlanningMS  float64                  `json:"planning_ms,omitempty"`
+	Query int                      `json:"query"`
+	SQL   string                   `json:"sql"`
+	Plan  []map[string]interface{} `json:"plan"`
 }
 
-// captureExplainPlan captures EXPLAIN (ANALYZE, BUFFERS) plans for queries
-func (g *goldenTestHook) captureExplainPlan(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+// captureExplainPlan captures structural EXPLAIN plans for queries.
+func (g *assertPlanHook) captureExplainPlan(ctx context.Context, sql string, args []interface{}, operationErr error) error {
 	if g.db == nil {
 		return nil
 	}
 
-	// Collapse runs of whitespace to single spaces so token boundary searches
-	// (`" SELECT "` etc.) match across raw-string SQL that contains tabs and
-	// newlines around keywords.
-	upperSQL := " " + strings.Join(strings.Fields(strings.ToUpper(sql)), " ") + " "
+	upperSQL := strings.ToUpper(strings.TrimSpace(sql))
 
-	if strings.HasPrefix(upperSQL, " EXPLAIN ") {
+	if strings.HasPrefix(upperSQL, "EXPLAIN") {
 		return nil
 	}
 
-	isSelect := strings.HasPrefix(upperSQL, " SELECT ")
-	isDML := strings.HasPrefix(upperSQL, " INSERT ") ||
-		strings.HasPrefix(upperSQL, " UPDATE ") ||
-		strings.HasPrefix(upperSQL, " DELETE ")
-
-	if strings.HasPrefix(upperSQL, " WITH ") {
-		lastSelect := strings.LastIndex(upperSQL, " SELECT ")
-		lastInsert := strings.LastIndex(upperSQL, " INSERT ")
-		lastUpdate := strings.LastIndex(upperSQL, " UPDATE ")
-		lastDelete := strings.LastIndex(upperSQL, " DELETE ")
-
-		maxDML := lastInsert
-		if lastUpdate > maxDML {
-			maxDML = lastUpdate
-		}
-		if lastDelete > maxDML {
-			maxDML = lastDelete
-		}
-
-		isSelect = lastSelect > maxDML
-		isDML = maxDML > lastSelect
-	}
-
-	if !isSelect && !isDML {
+	if !(strings.HasPrefix(upperSQL, "SELECT") ||
+		strings.HasPrefix(upperSQL, "INSERT") ||
+		strings.HasPrefix(upperSQL, "UPDATE") ||
+		strings.HasPrefix(upperSQL, "DELETE") ||
+		strings.HasPrefix(upperSQL, "WITH")) {
 		return nil
 	}
 
@@ -194,7 +154,7 @@ func (g *goldenTestHook) captureExplainPlan(ctx context.Context, sql string, arg
 	currentQuery := g.queryCounter
 	g.mu.Unlock()
 
-	explainSQL := fmt.Sprintf("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) %s", sql)
+	explainSQL := fmt.Sprintf("EXPLAIN (FORMAT JSON, COSTS OFF) %s", sql)
 
 	if g.db.writePool == nil {
 		return nil
@@ -202,46 +162,20 @@ func (g *goldenTestHook) captureExplainPlan(ctx context.Context, sql string, arg
 
 	var explainResult string
 
-	if isDML {
-		tx, err := g.db.writePool.Begin(ctx)
+	rows, err := g.db.writePool.Query(ctx, explainSQL, args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	if rows.Next() {
+		err = rows.Scan(&explainResult)
 		if err != nil {
 			return nil
 		}
-		defer func() {
-			_ = tx.Rollback(ctx)
-		}()
-
-		rows, err := tx.Query(ctx, explainSQL, args...)
-		if err != nil {
-			return nil
-		}
-		defer rows.Close()
-
-		if rows.Next() {
-			err = rows.Scan(&explainResult)
-			if err != nil {
-				return nil
-			}
-		}
-		if rows.Err() != nil {
-			return nil
-		}
-	} else {
-		rows, err := g.db.writePool.Query(ctx, explainSQL, args...)
-		if err != nil {
-			return nil
-		}
-		defer rows.Close()
-
-		if rows.Next() {
-			err = rows.Scan(&explainResult)
-			if err != nil {
-				return nil
-			}
-		}
-		if rows.Err() != nil {
-			return nil
-		}
+	}
+	if rows.Err() != nil {
+		return nil
 	}
 
 	var explainData []map[string]interface{}
@@ -249,23 +183,13 @@ func (g *goldenTestHook) captureExplainPlan(ctx context.Context, sql string, arg
 		return nil
 	}
 
-	var executionTime, planningTime float64
-	if len(explainData) > 0 {
-		if planData, ok := explainData[0]["Plan"].(map[string]interface{}); ok {
-			executionTime = toFloat64(planData["Actual Total Time"])
-		}
-		planningTime = toFloat64(explainData[0]["Planning Time"])
-	}
-
 	queryPlan := QueryPlan{
-		Query:       currentQuery,
-		SQL:         sql,
-		Plan:        explainData,
-		ExecutionMS: executionTime,
-		PlanningMS:  planningTime,
+		Query: currentQuery,
+		SQL:   sql,
+		Plan:  explainData,
 	}
 
-	err := g.appendToGoldenFile(queryPlan)
+	err = g.appendToPlanFile(queryPlan)
 	if err != nil {
 		return nil
 	}
@@ -273,23 +197,23 @@ func (g *goldenTestHook) captureExplainPlan(ctx context.Context, sql string, arg
 	return nil
 }
 
-// appendToGoldenFile appends the query plan to the golden file
-func (g *goldenTestHook) appendToGoldenFile(queryPlan QueryPlan) error {
+// appendToPlanFile appends the query plan to the plan file.
+func (g *assertPlanHook) appendToPlanFile(queryPlan QueryPlan) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	goldenFile := fmt.Sprintf("testdata/golden/%s.json", g.testName)
+	planFile := fmt.Sprintf("testdata/plans/%s.json", g.testName)
 
-	dir := filepath.Dir(goldenFile)
+	dir := filepath.Dir(planFile)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create directory %s: %w", dir, err)
 	}
 
 	var existingPlans []QueryPlan
-	if data, err := os.ReadFile(goldenFile); err == nil {
+	if data, err := os.ReadFile(planFile); err == nil {
 		if len(data) > 0 {
 			if err := json.Unmarshal(data, &existingPlans); err != nil {
-				return fmt.Errorf("failed to parse existing golden file %s: %w", goldenFile, err)
+				return fmt.Errorf("failed to parse existing plan file %s: %w", planFile, err)
 			}
 		}
 	}
@@ -301,41 +225,41 @@ func (g *goldenTestHook) appendToGoldenFile(queryPlan QueryPlan) error {
 		return fmt.Errorf("failed to marshal query plans: %w", err)
 	}
 
-	err = os.WriteFile(goldenFile, data, 0644)
+	err = os.WriteFile(planFile, data, 0644)
 	if err != nil {
-		return fmt.Errorf("failed to write golden file %s: %w", goldenFile, err)
+		return fmt.Errorf("failed to write plan file %s: %w", planFile, err)
 	}
 
 	return nil
 }
 
-// AssertGolden compares captured query plans against a baseline file.
-// On first run, it creates a baseline file from the current golden output.
+// AssertPlan compares captured query plans against a baseline file.
+// On first run, it creates a baseline file from the current plan output.
 // On subsequent runs, it compares the current plans against the baseline
 // and reports test failures for any query count, SQL, or plan changes.
-func (db *DB) AssertGolden(t *testing.T, testName string) {
-	goldenFile := fmt.Sprintf("testdata/golden/%s.json", testName)
+func (db *DB) AssertPlan(t *testing.T, testName string) {
+	planFile := fmt.Sprintf("testdata/plans/%s.json", testName)
 
-	data, err := os.ReadFile(goldenFile)
+	data, err := os.ReadFile(planFile)
 	if err != nil {
-		t.Errorf("Failed to read golden file %s: %v", goldenFile, err)
+		t.Errorf("Failed to read plan file %s: %v", planFile, err)
 		return
 	}
 
 	var currentPlans []QueryPlan
 	if err := json.Unmarshal(data, &currentPlans); err != nil {
-		t.Errorf("Failed to parse golden file %s: %v", goldenFile, err)
+		t.Errorf("Failed to parse plan file %s: %v", planFile, err)
 		return
 	}
 
-	baselineFile := goldenFile + ".baseline"
+	baselineFile := planFile + ".baseline"
 	if _, err := os.Stat(baselineFile); os.IsNotExist(err) {
 		err = os.WriteFile(baselineFile, data, 0644)
 		if err != nil {
 			t.Errorf("Failed to create baseline file: %v", err)
 			return
 		}
-		t.Logf("Created golden test baseline: %s", baselineFile)
+		t.Logf("Created plan baseline: %s", baselineFile)
 		return
 	}
 
@@ -392,22 +316,22 @@ func RequireDB(t *testing.T) *TestDB {
 	return testDB
 }
 
-// CleanupGolden removes all golden test files for the specified test name.
+// CleanupPlan removes all plan-regression files for the specified test name.
 // This includes both the captured query plan file and its baseline file
-// from the testdata/golden directory.
-func CleanupGolden(testName string) error {
+// from the testdata/plans directory.
+func CleanupPlan(testName string) error {
 	if testName == "" {
 		return nil
 	}
 
 	files := []string{
-		fmt.Sprintf("testdata/golden/%s.json", testName),
-		fmt.Sprintf("testdata/golden/%s.json.baseline", testName),
+		fmt.Sprintf("testdata/plans/%s.json", testName),
+		fmt.Sprintf("testdata/plans/%s.json.baseline", testName),
 	}
 
 	for _, file := range files {
 		if err := os.Remove(file); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("failed to remove golden file %s: %w", file, err)
+			return fmt.Errorf("failed to remove plan file %s: %w", file, err)
 		}
 	}
 

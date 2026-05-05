@@ -12,7 +12,7 @@ This guide covers strategies and techniques for optimizing database performance 
 4. [Read/Write Splitting](#readwrite-splitting)
 5. [Caching Strategies](#caching-strategies)
 6. [Monitoring and Profiling](#monitoring-and-profiling)
-7. [Golden Testing for Performance](#golden-testing-for-performance)
+7. [Plan-Regression Testing for Performance](#plan-regression-testing-for-performance)
 8. [Database Schema Optimization](#database-schema-optimization)
 9. [Application-Level Optimizations](#application-level-optimizations)
 10. [Troubleshooting Performance Issues](#troubleshooting-performance-issues)
@@ -545,25 +545,25 @@ func setupPerformanceMonitoringDB(metrics *PerformanceMetrics) *pgxkit.DB {
 }
 ```
 
-## Golden Testing for Performance
+## Plan-Regression Testing for Performance
 
-Golden testing captures EXPLAIN (ANALYZE, BUFFERS) plans for SELECT, INSERT, UPDATE, and DELETE queries. DML operations are executed within a rolled-back transaction to avoid side effects.
+Plan-regression testing captures the structural query plan via `EXPLAIN (FORMAT JSON, COSTS OFF)` and asserts it is unchanged across runs. It catches plan shape changes that often correlate with performance regressions (seq-scan to index-scan, nested-loop to hash-join, a new sort node, a different join order). It does NOT assert anything about query result rows.
 
-### Automated Performance Regression Detection
+### Catching Plan Regressions Automatically
 
 ```go
 func TestQueryPerformance(t *testing.T) {
     testDB := setupTestDB(t)
 
-    // Enable golden testing to capture EXPLAIN plans
-    db := testDB.EnableGolden("TestQueryPerformance")
+    // Enable plan-regression testing to capture structural EXPLAIN plans
+    db := testDB.EnableAssertPlan("TestQueryPerformance")
 
     // Create test data
     createTestData(t, testDB, 10000)
 
     // Test critical queries
     t.Run("user_search_performance", func(t *testing.T) {
-        // This query's EXPLAIN plan will be captured
+        // This query's structural EXPLAIN plan will be captured and asserted
         rows, err := db.Query(context.Background(), `
             SELECT u.id, u.name, u.email, COUNT(o.id) as order_count
             FROM users u
@@ -820,7 +820,7 @@ func bToKb(b uint64) uint64 {
 - **[Getting Started](Getting-Started)** - Basic setup and configuration
 - **[Examples](Examples)** - Practical code examples
 - **[Production Guide](Production-Guide)** - Deployment and production considerations
-- **[Testing Guide](Testing-Guide)** - Testing strategies and golden tests
+- **[Testing Guide](Testing-Guide)** - Testing strategies and plan-regression tests
 - **[API Reference](API-Reference)** - Complete API documentation
 
 ---

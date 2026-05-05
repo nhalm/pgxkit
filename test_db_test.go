@@ -51,35 +51,35 @@ func TestClean(t *testing.T) {
 	}
 }
 
-func TestEnableGolden(t *testing.T) {
+func TestEnableAssertPlan(t *testing.T) {
 	testDB := RequireDB(t)
 	if testDB == nil {
 		return // Test was skipped
 	}
 
-	// Test EnableGolden method - no longer takes testing.T
-	goldenDB := testDB.EnableGolden("TestExample")
+	// Test EnableAssertPlan method - no longer takes testing.T
+	planDB := testDB.EnableAssertPlan("TestExample")
 
-	if goldenDB == nil {
-		t.Error("EnableGolden should return a DB instance")
+	if planDB == nil {
+		t.Error("EnableAssertPlan should return a DB instance")
 	}
 
-	if goldenDB == testDB.DB {
-		t.Error("EnableGolden should return a new DB instance, not the same one")
+	if planDB == testDB.DB {
+		t.Error("EnableAssertPlan should return a new DB instance, not the same one")
 	}
 }
 
-func TestAssertGolden(t *testing.T) {
+func TestAssertPlan(t *testing.T) {
 	testDB := RequireDB(t)
 	if testDB == nil {
 		return // Test was skipped
 	}
 
-	goldenDB := testDB.EnableGolden("TestAssertGolden")
+	planDB := testDB.EnableAssertPlan("TestAssertPlan")
 
 	// Execute a query to capture plan
 	ctx := context.Background()
-	rows, err := goldenDB.Query(ctx, "SELECT 1 as test_column")
+	rows, err := planDB.Query(ctx, "SELECT 1 as test_column")
 	if err != nil {
 		t.Fatalf("Query should not fail: %v", err)
 	}
@@ -98,24 +98,24 @@ func TestAssertGolden(t *testing.T) {
 		t.Errorf("Expected result 1, got %d", result)
 	}
 
-	// Test AssertGolden - this should create baseline on first run
-	goldenDB.AssertGolden(t, "TestAssertGolden")
+	// Test AssertPlan - this should create baseline on first run
+	planDB.AssertPlan(t, "TestAssertPlan")
 
 	// Clean up
-	defer CleanupGolden("TestAssertGolden")
+	defer CleanupPlan("TestAssertPlan")
 }
 
-func TestCleanupGolden(t *testing.T) {
+func TestCleanupPlan(t *testing.T) {
 	// Create temporary directory for test
 	tempDir := t.TempDir()
 
-	// Create some test golden files using the new naming pattern
-	goldenFiles := []string{
-		filepath.Join(tempDir, "testdata", "golden", "TestCleanup.json"),
-		filepath.Join(tempDir, "testdata", "golden", "TestCleanup.json.baseline"),
+	// Create some test plan files using the new naming pattern
+	planFiles := []string{
+		filepath.Join(tempDir, "testdata", "plans", "TestCleanup.json"),
+		filepath.Join(tempDir, "testdata", "plans", "TestCleanup.json.baseline"),
 	}
 
-	for _, file := range goldenFiles {
+	for _, file := range planFiles {
 		err := os.MkdirAll(filepath.Dir(file), 0755)
 		if err != nil {
 			t.Fatalf("Failed to create directory: %v", err)
@@ -133,15 +133,15 @@ func TestCleanupGolden(t *testing.T) {
 	defer os.Chdir(originalDir)
 
 	// Test cleanup
-	err := CleanupGolden("TestCleanup")
+	err := CleanupPlan("TestCleanup")
 	if err != nil {
-		t.Errorf("CleanupGolden should not return error: %v", err)
+		t.Errorf("CleanupPlan should not return error: %v", err)
 	}
 
 	// Verify files were removed
-	for _, file := range goldenFiles {
+	for _, file := range planFiles {
 		if _, err := os.Stat(file); !os.IsNotExist(err) {
-			t.Errorf("Golden file should have been removed: %s", file)
+			t.Errorf("Plan file should have been removed: %s", file)
 		}
 	}
 }
@@ -170,7 +170,7 @@ func TestRequireDB(t *testing.T) {
 	})
 }
 
-func TestGoldenDML(t *testing.T) {
+func TestPlanDML(t *testing.T) {
 	testDB := RequireDB(t)
 	if testDB == nil {
 		return
@@ -179,10 +179,10 @@ func TestGoldenDML(t *testing.T) {
 	ctx := context.Background()
 
 	// Use a regular table (not TEMP) so it's visible across pool connections —
-	// EnableGolden returns a *DB sharing the pool, and DML may execute on a
+	// EnableAssertPlan returns a *DB sharing the pool, and DML may execute on a
 	// different connection than the CREATE.
 	_, err := testDB.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS golden_test_users (
+		CREATE TABLE IF NOT EXISTS plan_test_users (
 			id SERIAL PRIMARY KEY,
 			name TEXT NOT NULL,
 			email TEXT
@@ -192,16 +192,16 @@ func TestGoldenDML(t *testing.T) {
 		t.Fatalf("Failed to create test table: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = testDB.Exec(context.Background(), "DROP TABLE IF EXISTS golden_test_users")
+		_, _ = testDB.Exec(context.Background(), "DROP TABLE IF EXISTS plan_test_users")
 	})
 
 	t.Run("insert", func(t *testing.T) {
-		goldenDB := testDB.EnableGolden("TestGoldenDML_Insert")
-		defer CleanupGolden("TestGoldenDML_Insert")
+		planDB := testDB.EnableAssertPlan("TestPlanDML_Insert")
+		defer CleanupPlan("TestPlanDML_Insert")
 
 		var id int
-		err := goldenDB.QueryRow(ctx, `
-			INSERT INTO golden_test_users (name, email)
+		err := planDB.QueryRow(ctx, `
+			INSERT INTO plan_test_users (name, email)
 			VALUES ($1, $2)
 			RETURNING id
 		`, "Test User", "test@example.com").Scan(&id)
@@ -213,15 +213,15 @@ func TestGoldenDML(t *testing.T) {
 			t.Error("Expected non-zero id from INSERT RETURNING")
 		}
 
-		goldenDB.AssertGolden(t, "TestGoldenDML_Insert")
+		planDB.AssertPlan(t, "TestPlanDML_Insert")
 	})
 
 	t.Run("update", func(t *testing.T) {
-		goldenDB := testDB.EnableGolden("TestGoldenDML_Update")
-		defer CleanupGolden("TestGoldenDML_Update")
+		planDB := testDB.EnableAssertPlan("TestPlanDML_Update")
+		defer CleanupPlan("TestPlanDML_Update")
 
-		_, err := goldenDB.Exec(ctx, `
-			UPDATE golden_test_users
+		_, err := planDB.Exec(ctx, `
+			UPDATE plan_test_users
 			SET email = $1
 			WHERE name = $2
 		`, "updated@example.com", "Test User")
@@ -229,26 +229,26 @@ func TestGoldenDML(t *testing.T) {
 			t.Fatalf("UPDATE should not fail: %v", err)
 		}
 
-		goldenDB.AssertGolden(t, "TestGoldenDML_Update")
+		planDB.AssertPlan(t, "TestPlanDML_Update")
 	})
 
 	t.Run("delete", func(t *testing.T) {
-		goldenDB := testDB.EnableGolden("TestGoldenDML_Delete")
-		defer CleanupGolden("TestGoldenDML_Delete")
+		planDB := testDB.EnableAssertPlan("TestPlanDML_Delete")
+		defer CleanupPlan("TestPlanDML_Delete")
 
-		_, err := goldenDB.Exec(ctx, `
-			DELETE FROM golden_test_users
+		_, err := planDB.Exec(ctx, `
+			DELETE FROM plan_test_users
 			WHERE name = $1
 		`, "Test User")
 		if err != nil {
 			t.Fatalf("DELETE should not fail: %v", err)
 		}
 
-		goldenDB.AssertGolden(t, "TestGoldenDML_Delete")
+		planDB.AssertPlan(t, "TestPlanDML_Delete")
 	})
 }
 
-func TestGoldenCTE(t *testing.T) {
+func TestPlanCTE(t *testing.T) {
 	testDB := RequireDB(t)
 	if testDB == nil {
 		return
@@ -256,9 +256,9 @@ func TestGoldenCTE(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Regular table — see TestGoldenDML for why TEMP doesn't work here.
+	// Regular table — see TestPlanDML for why TEMP doesn't work here.
 	_, err := testDB.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS golden_cte_test (
+		CREATE TABLE IF NOT EXISTS plan_cte_test (
 			id SERIAL PRIMARY KEY,
 			value INT
 		)
@@ -267,17 +267,17 @@ func TestGoldenCTE(t *testing.T) {
 		t.Fatalf("Failed to create test table: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = testDB.Exec(context.Background(), "DROP TABLE IF EXISTS golden_cte_test")
+		_, _ = testDB.Exec(context.Background(), "DROP TABLE IF EXISTS plan_cte_test")
 	})
 
 	t.Run("cte_select", func(t *testing.T) {
-		goldenDB := testDB.EnableGolden("TestGoldenCTE_Select")
-		defer CleanupGolden("TestGoldenCTE_Select")
+		planDB := testDB.EnableAssertPlan("TestPlanCTE_Select")
+		defer CleanupPlan("TestPlanCTE_Select")
 
-		rows, err := goldenDB.Query(ctx, `
+		rows, err := planDB.Query(ctx, `
 			WITH numbered AS (
 				SELECT id, value, ROW_NUMBER() OVER () as rn
-				FROM golden_cte_test
+				FROM plan_cte_test
 			)
 			SELECT * FROM numbered WHERE rn <= 10
 		`)
@@ -286,25 +286,25 @@ func TestGoldenCTE(t *testing.T) {
 		}
 		rows.Close()
 
-		goldenDB.AssertGolden(t, "TestGoldenCTE_Select")
+		planDB.AssertPlan(t, "TestPlanCTE_Select")
 	})
 
 	t.Run("cte_insert", func(t *testing.T) {
-		goldenDB := testDB.EnableGolden("TestGoldenCTE_Insert")
-		defer CleanupGolden("TestGoldenCTE_Insert")
+		planDB := testDB.EnableAssertPlan("TestPlanCTE_Insert")
+		defer CleanupPlan("TestPlanCTE_Insert")
 
-		_, err := goldenDB.Exec(ctx, `
+		_, err := planDB.Exec(ctx, `
 			WITH vals AS (
 				SELECT generate_series(1, 5) as v
 			)
-			INSERT INTO golden_cte_test (value)
+			INSERT INTO plan_cte_test (value)
 			SELECT v FROM vals
 		`)
 		if err != nil {
 			t.Fatalf("CTE INSERT should not fail: %v", err)
 		}
 
-		goldenDB.AssertGolden(t, "TestGoldenCTE_Insert")
+		planDB.AssertPlan(t, "TestPlanCTE_Insert")
 	})
 }
 
@@ -322,12 +322,12 @@ func TestTestDBIntegration(t *testing.T) {
 		t.Fatalf("Setup should not fail: %v", err)
 	}
 
-	// Test EnableGolden
-	goldenDB := testDB.EnableGolden("TestIntegration")
+	// Test EnableAssertPlan
+	planDB := testDB.EnableAssertPlan("TestIntegration")
 
 	// Execute a simple query that should capture EXPLAIN plan
 	ctx := context.Background()
-	rows, err := goldenDB.Query(ctx, "SELECT 1 as test_column")
+	rows, err := planDB.Query(ctx, "SELECT 1 as test_column")
 	if err != nil {
 		t.Fatalf("Query should not fail: %v", err)
 	}
@@ -352,9 +352,9 @@ func TestTestDBIntegration(t *testing.T) {
 		t.Fatalf("Clean should not fail: %v", err)
 	}
 
-	// Test AssertGolden
-	goldenDB.AssertGolden(t, "TestIntegration")
+	// Test AssertPlan
+	planDB.AssertPlan(t, "TestIntegration")
 
-	// Clean up golden files
-	defer CleanupGolden("TestIntegration")
+	// Clean up plan files
+	defer CleanupPlan("TestIntegration")
 }

@@ -12,7 +12,7 @@
 ### Performance & Production
 - [Performance Guide](Performance-Guide) - Optimization strategies and best practices
 - [Production Guide](Production-Guide) - Deployment and production considerations
-- [Testing Guide](Testing-Guide) - Testing strategies and golden tests
+- [Testing Guide](Testing-Guide) - Testing strategies and plan-regression tests
 
 ### Development
 - [Contributing](Contributing) - How to contribute to pgxkit
@@ -22,7 +22,7 @@
 
 - **Type-safe operations** with Go generics
 - **Connection pooling** with read/write splitting
-- **Golden testing** for reliable test suites
+- **Plan-regression testing** to catch query plan shape changes
 - **Extensible hooks** for monitoring and logging
 - **Production-ready** with graceful shutdown
 - **Zero dependencies** beyond pgx

@@ -822,13 +822,13 @@ func TestUserQueries(t *testing.T) {
 }
 ```
 
-### EnableGolden
+### EnableAssertPlan
 
 ```go
-func (tdb *TestDB) EnableGolden(testName string) *DB
+func (tdb *TestDB) EnableAssertPlan(testName string) *DB
 ```
 
-Enables golden testing to capture and compare query execution plans for performance regression detection. Supports SELECT, INSERT, UPDATE, and DELETE queries. DML operations are executed within a transaction that is rolled back to avoid side effects.
+Enables plan-regression testing. Captures the structural query plan via `EXPLAIN (FORMAT JSON, COSTS OFF)` and asserts it is unchanged across runs. This catches plan shape changes such as seq-scan to index-scan, nested-loop to hash-join, a new sort node, or a different join order. It does NOT assert anything about query result rows. Because the captured form is plan-only (no `ANALYZE`), the underlying query is not executed during plan capture and there are no side effects to roll back.
 
 **Example:**
 ```go
@@ -841,13 +841,14 @@ func TestUserQueries(t *testing.T) {
     }
     defer testDB.Shutdown(ctx)
 
-    db := testDB.EnableGolden("TestUserQueries")
+    db := testDB.EnableAssertPlan("TestUserQueries")
 
-    // SELECT queries have their EXPLAIN plans captured
+    // SELECT queries have their structural plan captured
     rows, err := db.Query(ctx, "SELECT * FROM users WHERE active = true")
     // ...
 
-    // DML queries are also captured (rolled back after EXPLAIN)
+    // DML queries are also captured. EXPLAIN without ANALYZE plans the
+    // statement without executing it, so plan capture has no side effects.
     db.Exec(ctx, "UPDATE users SET last_login = NOW() WHERE id = $1", userID)
 }
 ```

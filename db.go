@@ -9,7 +9,7 @@
 //   - Read/Write Pool Abstraction: Safe by default with write pool, explicit read pool methods for optimization
 //   - Extensible Hook System: Add logging, tracing, metrics, circuit breakers through hooks
 //   - Smart Retry Logic: PostgreSQL-aware error detection with exponential backoff
-//   - Testing Infrastructure: Golden test support for performance regression detection
+//   - Testing Infrastructure: Plan-regression test support for catching query-plan changes
 //   - Type Helpers: Seamless pgx type conversions for clean architecture
 //   - Health Checks: Built-in database connectivity monitoring
 //   - Graceful Shutdown: Production-ready lifecycle management

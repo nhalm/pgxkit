@@ -509,9 +509,9 @@ func advancedHealthCheck(db *pgxkit.DB) error {
 
 ## Testing
 
-### Golden Tests
+### Plan-Regression Tests
 
-Golden tests capture EXPLAIN plans for SELECT, INSERT, UPDATE, and DELETE queries. DML operations are safely executed in rolled-back transactions.
+Plan-regression tests capture the structural plan via `EXPLAIN (FORMAT JSON, COSTS OFF)` and assert it is unchanged across runs. They catch shape changes such as seq-scan to index-scan, nested-loop to hash-join, a new sort node, or a different join order. This does not assert anything about query results.
 
 ```go
 func TestUserQueries(t *testing.T) {
@@ -525,8 +525,8 @@ func TestUserQueries(t *testing.T) {
     }
     defer testDB.Shutdown(ctx)
 
-    // Enable golden test support
-    db := testDB.EnableGolden("TestUserQueries")
+    // Enable plan-regression test support
+    db := testDB.EnableAssertPlan("TestUserQueries")
 
     // Load test data using your own fixture loading implementation
     // pgxkit does not provide a built-in fixture loader - use manual SQL or your preferred tool
@@ -540,7 +540,7 @@ func TestUserQueries(t *testing.T) {
         t.Fatal(err)
     }
 
-    // Execute query - EXPLAIN plan will be captured
+    // Execute query - structural EXPLAIN plan will be captured
     rows, err := db.Query(ctx, `
         SELECT u.id, u.name, COUNT(o.id) as order_count
         FROM users u
@@ -561,7 +561,8 @@ func TestUserQueries(t *testing.T) {
         users = append(users, user)
     }
 
-    // Golden test will compare query plan and results
+    // Plan-regression test will assert the structural query plan is unchanged.
+    // Result rows are NOT compared - assert those yourself.
     require.Len(t, users, 3)
 }
 ```
@@ -816,7 +817,7 @@ func main() {
 - **[Getting Started](Getting-Started)** - Basic setup and configuration
 - **[Performance Guide](Performance-Guide)** - Optimization strategies
 - **[Production Guide](Production-Guide)** - Deployment best practices
-- **[Testing Guide](Testing-Guide)** - Testing strategies and golden tests
+- **[Testing Guide](Testing-Guide)** - Testing strategies and plan-regression tests
 - **[API Reference](API-Reference)** - Complete API documentation
 
 ---

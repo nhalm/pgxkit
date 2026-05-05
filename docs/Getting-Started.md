@@ -185,7 +185,7 @@ err = pgxkit.RetryOperation(ctx, func(ctx context.Context) error {
 - **[Examples](Examples)** - Comprehensive usage examples
 - **[Performance Guide](Performance-Guide)** - Optimization strategies
 - **[Production Guide](Production-Guide)** - Deployment best practices
-- **[Testing Guide](Testing-Guide)** - Golden test support
+- **[Testing Guide](Testing-Guide)** - Plan-regression test support
 
 **Common Patterns**:
 - **[API Reference](API-Reference)** - Complete API documentation

@@ -10,7 +10,7 @@ This guide covers effective testing strategies and best practices when using pgx
 2. [Test Environment Setup](#test-environment-setup)
 3. [Unit Testing](#unit-testing)
 4. [Integration Testing](#integration-testing)
-5. [Golden Testing](#golden-testing)
+5. [Plan-Regression Testing](#plan-regression-testing)
 6. [Testing Patterns](#testing-patterns)
 7. [Test Data Management](#test-data-management)
 8. [Performance Testing](#performance-testing)
@@ -23,7 +23,7 @@ pgxkit follows these testing principles:
 
 - **Test database operations without mocking** - Use real database connections for reliable tests
 - **Isolate test data** - Each test should have its own clean database state
-- **Test performance regressions** - Use golden tests to catch query plan changes
+- **Test performance regressions** - Use plan-regression tests to catch query plan changes
 - **Test error conditions** - Verify proper error handling and recovery
 - **Keep tests fast** - Use efficient setup/teardown and parallel execution
 
@@ -387,18 +387,18 @@ func TestUserService_CreateUserWithProfile(t *testing.T) {
 }
 ```
 
-## Golden Testing
+## Plan-Regression Testing
 
-Golden testing captures EXPLAIN (ANALYZE, BUFFERS) plans for SELECT, INSERT, UPDATE, and DELETE queries to detect query plan regressions. DML operations (INSERT/UPDATE/DELETE) are executed within a transaction that is rolled back, so no data is modified.
+Plan-regression testing captures the structural query plan via `EXPLAIN (FORMAT JSON, COSTS OFF)` and asserts it is unchanged across runs. It catches plan shape changes such as seq-scan to index-scan, nested-loop to hash-join, a new sort node, or a different join order. It does NOT assert anything about query result rows — assert those yourself in the test body. Because the captured form is plan-only (no `ANALYZE`), the underlying statement is not executed during plan capture, so there are no side effects.
 
 ### Query Plan Testing
 
 ```go
-func TestUserQueries_Golden(t *testing.T) {
+func TestUserQueries_Plan(t *testing.T) {
     testDB := setupTestDB(t)
 
-    // Enable golden testing
-    db := testDB.EnableGolden("TestUserQueries_Golden")
+    // Enable plan-regression testing
+    db := testDB.EnableAssertPlan("TestUserQueries_Plan")
 
     // Load test data with manual SQL
     _, err := testDB.Exec(context.Background(), `
@@ -417,7 +417,7 @@ func TestUserQueries_Golden(t *testing.T) {
     require.NoError(t, err)
 
     t.Run("complex_user_query", func(t *testing.T) {
-        // This query's EXPLAIN plan will be captured and compared
+        // This query's structural EXPLAIN plan will be captured and asserted
         rows, err := db.Query(context.Background(), `
             SELECT
                 u.id,
@@ -448,10 +448,9 @@ func TestUserQueries_Golden(t *testing.T) {
         // Verify results make sense
         require.True(t, len(users) > 0)
 
-        // Golden test will automatically capture:
-        // 1. Query execution plan
-        // 2. Performance metrics
-        // 3. Result structure
+        // The plan-regression test asserts the structural query plan is
+        // unchanged. It does not compare result rows or measure execution
+        // time - assert results yourself if needed.
     })
 
     t.Run("user_search_query", func(t *testing.T) {
@@ -476,12 +475,13 @@ func TestUserQueries_Golden(t *testing.T) {
             users = append(users, user)
         }
 
-        // The golden test will track performance of this search
+        // The plan-regression test will assert the structural plan of this search is unchanged
         assert.True(t, len(users) >= 0)
     })
 
     t.Run("insert_with_returning", func(t *testing.T) {
-        // DML queries are also captured - executed in a rolled-back transaction
+        // DML queries are also captured. EXPLAIN without ANALYZE plans the
+        // statement without executing it, so plan capture has no side effects.
         var userID int
         err := db.QueryRow(context.Background(), `
             INSERT INTO users (name, email, active)
@@ -508,7 +508,7 @@ func TestUserQueries_Golden(t *testing.T) {
 ```go
 func TestPerformanceRegression(t *testing.T) {
     testDB := setupTestDB(t)
-    db := testDB.EnableGolden("TestPerformanceRegression")
+    db := testDB.EnableAssertPlan("TestPerformanceRegression")
 
     // Create large dataset for performance testing
     _, err := testDB.Exec(context.Background(), `
@@ -551,10 +551,13 @@ func TestPerformanceRegression(t *testing.T) {
             "Query took too long: %v", duration)
         assert.Len(t, users, 50)
 
-        // Golden test will track:
-        // - Query execution time
-        // - EXPLAIN plan
-        // - Index usage
+        // The plan-regression test will track:
+        // - Structural EXPLAIN plan (FORMAT JSON, COSTS OFF)
+        // - Plan-shape changes such as seq-scan vs index-scan,
+        //   nested-loop vs hash-join, new sort nodes, or join-order changes
+        //
+        // Wall-clock duration is asserted explicitly above; the
+        // plan-regression test does not measure execution time.
     })
 }
 ```
@@ -1093,7 +1096,7 @@ func TestUserService_GetActiveUsers_Bad(t *testing.T) {
 - [ ] Test database setup and teardown
 - [ ] Unit tests for business logic
 - [ ] Integration tests for database operations
-- [ ] Golden tests for performance regression
+- [ ] Plan-regression tests for query plan shape
 - [ ] Error condition testing
 - [ ] Concurrent operation testing
 - [ ] Benchmark tests for critical paths
