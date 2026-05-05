@@ -38,11 +38,12 @@ jobs:
     - name: Verify dependencies
       run: go mod verify
 
-    - name: Run tests
-      run: go test -v -race -parallel=1 ./...
-
     - name: Run tests with coverage
-      run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+      run: make test-coverage
+
+    - name: Tear down test database
+      if: always()
+      run: make test-db-down
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v6
@@ -108,34 +109,3 @@ jobs:
 
     - name: Build
       run: go build -v ./...
-
-  integration-test:
-    name: Integration Tests
-    runs-on: ubuntu-latest
-    needs: [test, lint]
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: testdb
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-
-    steps:
-    - uses: actions/checkout@v6
-
-    - name: Set up Go
-      uses: actions/setup-go@v6
-      with:
-        go-version: '1.26'
-
-    - name: Run integration tests
-      run: go test -v -tags=integration -parallel=1 ./...
-      env:
-        DATABASE_URL: postgres://postgres:postgres@localhost:5432/testdb?sslmode=disable

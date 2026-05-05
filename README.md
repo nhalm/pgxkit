@@ -247,6 +247,24 @@ if err := db.HealthCheck(ctx); err != nil {
 
 ## Testing
 
+### Running the Test Suite
+
+This repo uses a `Makefile` as the single entry point for tests, lint, and
+benchmarks — both locally and in CI. Always use the make targets so the two
+stay in sync.
+
+```bash
+make test-db-up    # start a containerized Postgres on a free host port
+make test          # run the full suite
+make test-db-down  # tear down when done
+```
+
+Other targets: `make test-coverage`, `make coverage-html`, `make bench`,
+`make lint`, `make help`.
+
+Requires Docker. To use an existing Postgres instead, set `TEST_DATABASE_URL`
+and run `go test ./...` directly.
+
 ### Basic Testing
 
 ```go
