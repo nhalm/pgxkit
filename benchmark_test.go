@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // BenchmarkHookOverhead measures the performance impact of hooks
@@ -37,7 +39,7 @@ func BenchmarkHookOverhead(b *testing.B) {
 			writePool: pool,
 			hooks:     newHooks(),
 		}
-		db.hooks.addHook(BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		db.hooks.addHook(BeforeOperation, func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 			return nil
 		})
 
@@ -57,10 +59,10 @@ func BenchmarkHookOverhead(b *testing.B) {
 			writePool: pool,
 			hooks:     newHooks(),
 		}
-		db.hooks.addHook(BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		db.hooks.addHook(BeforeOperation, func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 			return nil
 		})
-		db.hooks.addHook(AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		db.hooks.addHook(AfterOperation, func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 			return nil
 		})
 
@@ -81,10 +83,10 @@ func BenchmarkHookOverhead(b *testing.B) {
 			hooks:     newHooks(),
 		}
 		for i := 0; i < 5; i++ {
-			db.hooks.addHook(BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+			db.hooks.addHook(BeforeOperation, func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 				return nil
 			})
-			db.hooks.addHook(AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+			db.hooks.addHook(AfterOperation, func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 				return nil
 			})
 		}
@@ -214,10 +216,10 @@ func BenchmarkConcurrentOperations(b *testing.B) {
 			writePool: pool,
 			hooks:     newHooks(),
 		}
-		dbWithHooks.hooks.addHook(BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		dbWithHooks.hooks.addHook(BeforeOperation, func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 			return nil
 		})
-		dbWithHooks.hooks.addHook(AfterOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		dbWithHooks.hooks.addHook(AfterOperation, func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 			return nil
 		})
 
@@ -238,18 +240,18 @@ func BenchmarkHookExecutionTime(b *testing.B) {
 	ctx := context.Background()
 
 	b.Run("EmptyHook", func(b *testing.B) {
-		hookFunc := func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		hookFunc := func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 			return nil
 		}
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_ = hookFunc(ctx, "SELECT 1", nil, nil)
+			_ = hookFunc(ctx, "SELECT 1", nil, pgconn.CommandTag{}, nil)
 		}
 	})
 
 	b.Run("LoggingHook", func(b *testing.B) {
-		hookFunc := func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		hookFunc := func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 			_ = sql
 			_ = args
 			return nil
@@ -257,19 +259,19 @@ func BenchmarkHookExecutionTime(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_ = hookFunc(ctx, "SELECT 1", []interface{}{1, "test"}, nil)
+			_ = hookFunc(ctx, "SELECT 1", []interface{}{1, "test"}, pgconn.CommandTag{}, nil)
 		}
 	})
 
 	b.Run("TimingHook", func(b *testing.B) {
-		hookFunc := func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		hookFunc := func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 			_ = time.Now()
 			return nil
 		}
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_ = hookFunc(ctx, "SELECT 1", nil, nil)
+			_ = hookFunc(ctx, "SELECT 1", nil, pgconn.CommandTag{}, nil)
 		}
 	})
 }

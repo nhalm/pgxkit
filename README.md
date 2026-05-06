@@ -127,12 +127,12 @@ Add observability and custom functionality through connect options:
 db := pgxkit.NewDB()
 err := db.Connect(ctx, dsn,
     // Logging hook
-    pgxkit.WithBeforeOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+    pgxkit.WithBeforeOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
         log.Printf("Executing: %s", sql)
         return nil
     }),
     // Metrics hook
-    pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+    pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
         if operationErr != nil {
             metrics.IncrementCounter("db.errors")
         }
@@ -450,13 +450,13 @@ users, err := queries.GetAllUsers(ctx)
 db := pgxkit.NewDB()
 err := db.Connect(ctx, dsn,
     // Add tracing
-    pgxkit.WithBeforeOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+    pgxkit.WithBeforeOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
         span := trace.SpanFromContext(ctx)
         span.SetAttributes(attribute.String("db.statement", sql))
         return nil
     }),
     // Add metrics
-    pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+    pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
         status := "success"
         if operationErr != nil {
             status = "error"

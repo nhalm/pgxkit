@@ -173,7 +173,7 @@ Configure hooks when connecting to add metrics collection:
 ```go
 db := pgxkit.NewDB()
 err := db.Connect(ctx, "",
-    pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+    pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
         duration := time.Since(start) // start from context
 
         // Prometheus metrics
@@ -496,7 +496,7 @@ defer cancel()
 ```go
 db := pgxkit.NewDB()
 err := db.Connect(ctx, "",
-    pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+    pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
         if duration := getDuration(ctx); duration > 100*time.Millisecond {
             log.Printf("Slow query: %s (took %v)", sql, duration)
         }

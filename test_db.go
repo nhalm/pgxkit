@@ -10,130 +10,163 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // TestDB is a testing utility that wraps DB with testing-specific functionality.
-// It provides simple methods for test setup, cleanup, and plan-regression
-// assertion support. TestDB automatically manages test database connections
-// and offers utilities for catching query-plan changes between runs.
 type TestDB struct {
 	*DB
 }
 
-// NewTestDB creates a new unconnected TestDB instance.
-// Call Connect() to establish the database connection.
-//
-// Example:
-//
-//	func TestUserOperations(t *testing.T) {
-//	    testDB := pgxkit.NewTestDB()
-//	    err := testDB.Connect(context.Background(), "") // uses TEST_DATABASE_URL env var
-//	    if err != nil {
-//	        t.Skip("Test database not available")
-//	    }
-//	    defer testDB.Shutdown(context.Background())
-//	    // ... test code
-//	}
 func NewTestDB() *TestDB {
 	return &TestDB{DB: NewDB()}
 }
 
-// Setup prepares the database for testing.
-// This method verifies the database connection and can be extended
-// to seed data or perform other test setup tasks.
-// Returns an error if the database is not available or not ready for testing.
-//
-// Example:
-//
-//	err := testDB.Setup()
-//	if err != nil {
-//	    t.Skip("Test database not available")
-//	}
 func (tdb *TestDB) Setup() error {
 	ctx := context.Background()
-
 	if tdb.writePool == nil {
 		return fmt.Errorf("no database pool available")
 	}
-
-	err := tdb.writePool.Ping(ctx)
-	if err != nil {
+	if err := tdb.writePool.Ping(ctx); err != nil {
 		return fmt.Errorf("failed to ping database: %w", err)
 	}
-
 	return nil
 }
 
-// Clean performs cleanup operations after a test completes.
-// It verifies the database connection is still active and can be extended
-// to truncate tables or reset test data. Returns nil if no pool is configured.
 func (tdb *TestDB) Clean() error {
 	ctx := context.Background()
-
 	if tdb.writePool == nil {
 		return nil
 	}
-
-	err := tdb.writePool.Ping(ctx)
-	if err != nil {
+	if err := tdb.writePool.Ping(ctx); err != nil {
 		return fmt.Errorf("database connection lost during cleanup: %w", err)
 	}
-
 	return nil
 }
 
-// EnableGolden returns a new DB instance that records every database event
-// (BEGIN, QUERY, COMMIT, ROLLBACK) the test scenario produces, including
-// SQL, normalized args, and materialized result rows. Call AssertGolden
-// after the scenario to compare the transcript against
-// testdata/golden/<testName>.json. Pass GoldenOption values (for example
-// WithGoldenNormalizer) to extend or override the default normalization.
-//
-// Example:
-//
-//	golden := testDB.EnableGolden("TestCreateOrder")
-//	// run the code under test using golden as the DB
-//	golden.AssertGolden(t, "TestCreateOrder")
-func (tdb *TestDB) EnableGolden(testName string, opts ...GoldenOption) *DB {
-	return &DB{
-		readPool:  tdb.readPool,
-		writePool: tdb.writePool,
-		hooks:     newHooks(),
-		recorder:  newTranscriptRecorder(testName, opts...),
+// GoldenOption configures the assertGoldenHook installed by EnableGolden.
+type GoldenOption func(*assertGoldenHook)
+
+// WithGoldenNormalizer registers a custom normalizer that runs before the
+// defaults (timestamps, UUIDs). Return ok=true to take over normalization for
+// the value; ok=false to fall through.
+func WithGoldenNormalizer(fn func(any) (any, bool)) GoldenOption {
+	return func(h *assertGoldenHook) {
+		h.normalizer.custom = append(h.normalizer.custom, fn)
 	}
 }
 
+// assertGoldenHook accumulates a transcript of database events via the hook
+// system. It mirrors assertPlanHook in shape and is the in-memory accumulator
+// behind AssertGolden.
+type assertGoldenHook struct {
+	testName   string
+	mu         sync.Mutex
+	events     []transcriptEvent
+	step       int
+	normalizer *normalizer
+}
+
+func (h *assertGoldenHook) afterOp(_ context.Context, sql string, args []any, tag pgconn.CommandTag, err error) error {
+	if err != nil {
+		return nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.step++
+	ev := transcriptEvent{
+		Step:  h.step,
+		Event: transcriptEventQuery,
+		SQL:   sql,
+		Args:  h.normalizer.normalizeArgs(args),
+	}
+	// pgx returns an empty tag for Query at AfterOperation time (rows haven't
+	// streamed); the tag string only lands for Exec. Use that as the Exec signal.
+	if tag.String() != "" {
+		ra := tag.RowsAffected()
+		ev.RowsAffected = &ra
+	}
+	h.events = append(h.events, ev)
+	return nil
+}
+
+func (h *assertGoldenHook) beforeTx(_ context.Context, _ string, _ []any, _ pgconn.CommandTag, _ error) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.step++
+	h.events = append(h.events, transcriptEvent{Step: h.step, Event: transcriptEventBegin})
+	return nil
+}
+
+func (h *assertGoldenHook) afterTx(_ context.Context, sql string, _ []any, _ pgconn.CommandTag, _ error) error {
+	var name string
+	switch sql {
+	case TxCommit:
+		name = transcriptEventCommit
+	case TxRollback:
+		name = transcriptEventRollback
+	default:
+		return nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.step++
+	h.events = append(h.events, transcriptEvent{Step: h.step, Event: name})
+	return nil
+}
+
+// EnableGolden returns a *DB that records database events (BEGIN, QUERY,
+// COMMIT, ROLLBACK) for the test scenario via the hook system. Call
+// AssertGolden after the scenario to compare against
+// testdata/golden/<testName>.json.
+func (tdb *TestDB) EnableGolden(testName string, opts ...GoldenOption) *DB {
+	hook := &assertGoldenHook{testName: testName, normalizer: newNormalizer()}
+	for _, opt := range opts {
+		opt(hook)
+	}
+	goldenDB := &DB{
+		readPool:   tdb.readPool,
+		writePool:  tdb.writePool,
+		hooks:      newHooks(),
+		goldenHook: hook,
+	}
+	goldenDB.hooks.addHook(AfterOperation, hook.afterOp)
+	goldenDB.hooks.addHook(BeforeTransaction, hook.beforeTx)
+	goldenDB.hooks.addHook(AfterTransaction, hook.afterTx)
+	return goldenDB
+}
+
 // AssertGolden compares the captured transcript against
-// testdata/golden/<testName>.json. On the first run (or with -overwrite-golden)
-// it writes the baseline and logs that fact. On subsequent runs it fails the
-// test with a unified diff if the transcript has changed. testName must match
-// the name passed to EnableGolden.
+// testdata/golden/<testName>.json. First run (or with -overwrite-golden) writes
+// the baseline; later runs fail with a unified diff if it changes.
 func (db *DB) AssertGolden(t *testing.T, testName string) {
 	t.Helper()
 	db.assertGolden(t, testName)
 }
 
-// assertGolden is the implementation behind AssertGolden, taking the smaller
-// goldenT interface so it can be exercised by capturing fakes in tests.
 func (db *DB) assertGolden(t goldenT, testName string) {
 	t.Helper()
-	if db.recorder == nil {
-		t.Errorf("AssertGolden called on a DB without an active golden recorder; use TestDB.EnableGolden first")
+	if db.goldenHook == nil {
+		t.Errorf("AssertGolden called on a DB without an active golden hook; use TestDB.EnableGolden first")
 		return
 	}
-	if db.recorder.testName != testName {
-		t.Errorf("AssertGolden testName %q does not match recorder testName %q", testName, db.recorder.testName)
+	if db.goldenHook.testName != testName {
+		t.Errorf("AssertGolden testName %q does not match hook testName %q", testName, db.goldenHook.testName)
 		return
 	}
-	assertGolden(t, db.recorder)
+	db.goldenHook.mu.Lock()
+	events := append([]transcriptEvent(nil), db.goldenHook.events...)
+	db.goldenHook.mu.Unlock()
+
+	current, err := marshalEvents(events)
+	if err != nil {
+		t.Errorf("failed to marshal transcript: %v", err)
+		return
+	}
+	assertBaseline(t, goldenPath(testName), current, "golden transcript", overwriteGolden != nil && *overwriteGolden)
 }
 
-// cleanupGolden removes the golden transcript file for the named scenario.
-// Used internally by pgxkit's own tests so generated baselines don't pollute
-// the repo. Not part of the public API — end users should let baselines
-// persist across runs (that's the whole point of golden testing) and use
-// the -overwrite-golden flag to regenerate, or `rm` the file directly to
-// invalidate it.
 func cleanupGolden(testName string) error {
 	if testName == "" {
 		return nil
@@ -148,22 +181,16 @@ func cleanupGolden(testName string) error {
 var overwritePlan = flag.Bool("overwrite-plan", false, "regenerate testdata/plans baselines instead of asserting")
 
 // EnableAssertPlan returns a *DB that captures the structural EXPLAIN plan
-// of each SELECT/INSERT/UPDATE/DELETE/WITH query into memory. Call AssertPlan
-// to compare against testdata/plans/<testName>.json.
+// of each SELECT/INSERT/UPDATE/DELETE/WITH query into memory.
 func (tdb *TestDB) EnableAssertPlan(testName string) *DB {
 	planDB := &DB{
 		readPool:  tdb.readPool,
 		writePool: tdb.writePool,
 		hooks:     newHooks(),
 	}
-
-	planHook := &assertPlanHook{
-		testName: testName,
-		db:       planDB,
-	}
+	planHook := &assertPlanHook{testName: testName, db: planDB}
 	planDB.planHook = planHook
 	planDB.hooks.addHook(BeforeOperation, planHook.captureExplainPlan)
-
 	return planDB
 }
 
@@ -181,11 +208,10 @@ type QueryPlan struct {
 	Plan  []map[string]interface{} `json:"plan"`
 }
 
-func (g *assertPlanHook) captureExplainPlan(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+func (g *assertPlanHook) captureExplainPlan(ctx context.Context, sql string, args []interface{}, _ pgconn.CommandTag, _ error) error {
 	if g.db == nil || g.db.writePool == nil {
 		return nil
 	}
-
 	upperSQL := strings.ToUpper(strings.TrimSpace(sql))
 	if strings.HasPrefix(upperSQL, "EXPLAIN") {
 		return nil
@@ -197,7 +223,6 @@ func (g *assertPlanHook) captureExplainPlan(ctx context.Context, sql string, arg
 		!strings.HasPrefix(upperSQL, "WITH") {
 		return nil
 	}
-
 	explainSQL := fmt.Sprintf("EXPLAIN (FORMAT JSON, COSTS OFF) %s", sql)
 
 	var explainResult string
@@ -227,7 +252,6 @@ func (g *assertPlanHook) captureExplainPlan(ctx context.Context, sql string, arg
 		Plan:  explainData,
 	})
 	g.mu.Unlock()
-
 	return nil
 }
 
@@ -243,13 +267,10 @@ func marshalPlans(plans []QueryPlan) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	data = append(data, '\n')
-	return data, nil
+	return append(data, '\n'), nil
 }
 
-// AssertPlan compares the captured plans against testdata/plans/<testName>.json,
-// writing the baseline on first run or with -overwrite-plan, and failing with
-// a unified diff on mismatch. testName must match EnableAssertPlan's.
+// AssertPlan compares the captured plans against testdata/plans/<testName>.json.
 func (db *DB) AssertPlan(t *testing.T, testName string) {
 	t.Helper()
 	db.assertPlan(t, testName)
@@ -275,57 +296,25 @@ func (db *DB) assertPlan(t goldenT, testName string) {
 		t.Errorf("failed to marshal plans: %v", err)
 		return
 	}
-
-	path := planPath(testName)
-	_, statErr := os.Stat(path)
-	missing := os.IsNotExist(statErr)
-
-	if missing || (overwritePlan != nil && *overwritePlan) {
-		if err := writeBaseline(path, current); err != nil {
-			t.Errorf("%v", err)
-			return
-		}
-		if missing {
-			t.Logf("created plan baseline: %s", path)
-		} else {
-			t.Logf("regenerated plan baseline: %s", path)
-		}
-		return
-	}
-
-	baseline, err := os.ReadFile(path)
-	if err != nil {
-		t.Errorf("failed to read plan file %s: %v", path, err)
-		return
-	}
-
-	diff, ok := unifiedDiff(path, baseline, current)
-	if ok {
-		return
-	}
-	t.Errorf("plan regression for %s\n%s", path, diff)
+	assertBaseline(t, planPath(testName), current, "plan", overwritePlan != nil && *overwritePlan)
 }
 
 // RequireDB ensures a test database is available or skips the test.
-// It creates a TestDB and connects using TEST_DATABASE_URL environment variable.
 func RequireDB(t *testing.T) *TestDB {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL not set, skipping test")
 		return nil
 	}
-
 	testDB := NewTestDB()
 	ctx := context.Background()
-	err := testDB.Connect(ctx, dsn)
-	if err != nil {
+	if err := testDB.Connect(ctx, dsn); err != nil {
 		t.Skipf("Failed to connect to test database: %v", err)
 		return nil
 	}
 	return testDB
 }
 
-// cleanupPlan removes a plan baseline file. Internal helper for pgxkit tests.
 func cleanupPlan(testName string) error {
 	if testName == "" {
 		return nil

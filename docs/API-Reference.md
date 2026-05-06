@@ -347,7 +347,7 @@ return tx.Commit(ctx)
 func (t *Tx) Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error)
 ```
 
-Executes a query within the transaction. Unlike DB.Query, this does not fire BeforeOperation/AfterOperation hooks.
+Executes a query within the transaction. Fires BeforeOperation/AfterOperation hooks on the parent DB; AfterOperation receives a zero-value tag (rows haven't streamed yet).
 
 #### QueryRow
 
@@ -355,7 +355,7 @@ Executes a query within the transaction. Unlike DB.Query, this does not fire Bef
 func (t *Tx) QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row
 ```
 
-Executes a query that returns a single row within the transaction. Unlike DB.QueryRow, this does not fire BeforeOperation/AfterOperation hooks.
+Executes a query that returns a single row within the transaction. Fires BeforeOperation/AfterOperation hooks on the parent DB; AfterOperation receives a zero-value tag.
 
 #### Exec
 
@@ -363,7 +363,7 @@ Executes a query that returns a single row within the transaction. Unlike DB.Que
 func (t *Tx) Exec(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error)
 ```
 
-Executes a statement within the transaction. Unlike DB.Exec, this does not fire BeforeOperation/AfterOperation hooks.
+Executes a statement within the transaction. Fires BeforeOperation/AfterOperation hooks on the parent DB; AfterOperation receives the command tag.
 
 #### Commit
 
@@ -455,7 +455,7 @@ These constants are passed as the `sql` parameter to `AfterTransaction` hooks, a
 
 **Example:**
 ```go
-pgxkit.WithAfterTransaction(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+pgxkit.WithAfterTransaction(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
     switch sql {
     case pgxkit.TxCommit:
         log.Println("Transaction committed")
@@ -487,15 +487,16 @@ const (
 ### HookFunc
 
 ```go
-type HookFunc func(ctx context.Context, sql string, args []interface{}, operationErr error) error
+type HookFunc func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error
 ```
 
 Universal hook function signature for operation-level hooks.
 
 **Parameters:**
 - `ctx` - The context for the operation
-- `sql` - The SQL statement being executed (empty for shutdown hooks)
+- `sql` - The SQL statement being executed (empty for shutdown hooks; `TxCommit`/`TxRollback` for AfterTransaction)
 - `args` - The arguments for the SQL statement (nil for shutdown hooks)
+- `tag` - The pgx command tag. Populated for `AfterOperation` on Exec; zero value otherwise (including `AfterOperation` on Query, since pgx fills the tag only after rows are closed)
 - `operationErr` - The error from the operation (nil for before hooks)
 
 ### Operation Hook Options
@@ -522,12 +523,12 @@ func WithOnRelease(fn func(*pgx.Conn)) ConnectOption
 db := pgxkit.NewDB()
 err := db.Connect(ctx, dsn,
     // Logging hook
-    pgxkit.WithBeforeOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+    pgxkit.WithBeforeOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
         log.Printf("Executing: %s", sql)
         return nil
     }),
     // Metrics hook
-    pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+    pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
         queryCounter.WithLabelValues(operation, status).Inc()
         return nil
     }),

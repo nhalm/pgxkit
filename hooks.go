@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -36,17 +37,14 @@ const (
 )
 
 // HookFunc is the universal hook function signature for operation-level hooks.
-// All operation-level hooks use this signature for consistency and simplicity.
 //
-// Parameters:
-//   - ctx: The context for the operation
-//   - sql: The SQL statement being executed (empty for shutdown hooks)
-//   - args: The arguments for the SQL statement (nil for shutdown hooks)
-//   - operationErr: The error from the operation (nil for before hooks)
-//
-// The hook should return an error if it wants to abort the operation.
-// For after hooks, returning an error will not affect the original operation result.
-type HookFunc func(ctx context.Context, sql string, args []interface{}, operationErr error) error
+// tag carries pool.Exec's CommandTag on AfterOperation for Exec calls. It is the
+// zero value everywhere else — including AfterOperation for Query, because pgx
+// fills the tag only after rows are closed and AfterOperation fires before
+// iteration. operationErr is nil on before-hooks. Returning an error from a
+// before-hook aborts the operation; from an after-hook it does not affect the
+// original result but is reported.
+type HookFunc func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error
 
 // hooks manages both operation-level and connection-level hooks
 type hooks struct {
@@ -94,65 +92,60 @@ func (h *hooks) addHook(hookType HookType, hookFunc HookFunc) {
 	}
 }
 
-// ExecuteBeforeOperation executes all BeforeOperation hooks
-func (h *hooks) executeBeforeOperation(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+func (h *hooks) executeBeforeOperation(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
 	for _, hook := range h.beforeOperation {
-		if err := hook(ctx, sql, args, operationErr); err != nil {
+		if err := hook(ctx, sql, args, tag, operationErr); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// ExecuteAfterOperation executes all AfterOperation hooks
-func (h *hooks) executeAfterOperation(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+func (h *hooks) executeAfterOperation(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
 	for _, hook := range h.afterOperation {
-		if err := hook(ctx, sql, args, operationErr); err != nil {
+		if err := hook(ctx, sql, args, tag, operationErr); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// ExecuteBeforeTransaction executes all BeforeTransaction hooks
-func (h *hooks) executeBeforeTransaction(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+func (h *hooks) executeBeforeTransaction(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
 	for _, hook := range h.beforeTransaction {
-		if err := hook(ctx, sql, args, operationErr); err != nil {
+		if err := hook(ctx, sql, args, tag, operationErr); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// ExecuteAfterTransaction executes all AfterTransaction hooks
-func (h *hooks) executeAfterTransaction(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+func (h *hooks) executeAfterTransaction(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
 	for _, hook := range h.afterTransaction {
-		if err := hook(ctx, sql, args, operationErr); err != nil {
+		if err := hook(ctx, sql, args, tag, operationErr); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// ExecuteOnShutdown executes all OnShutdown hooks
-func (h *hooks) executeOnShutdown(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+func (h *hooks) executeOnShutdown(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
 	for _, hook := range h.onShutdown {
-		if err := hook(ctx, sql, args, operationErr); err != nil {
+		if err := hook(ctx, sql, args, tag, operationErr); err != nil {
 			return err
 		}
 	}

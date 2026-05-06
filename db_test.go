@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -480,37 +481,37 @@ func TestOperationHookOptions(t *testing.T) {
 	afterTxCalled := false
 	shutdownCalled := false
 
-	WithBeforeOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+	WithBeforeOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 		beforeOpCalled = true
 		return nil
 	})(cfg)
 
-	WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+	WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 		afterOpCalled = true
 		return nil
 	})(cfg)
 
-	WithBeforeTransaction(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+	WithBeforeTransaction(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 		beforeTxCalled = true
 		return nil
 	})(cfg)
 
-	WithAfterTransaction(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+	WithAfterTransaction(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 		afterTxCalled = true
 		return nil
 	})(cfg)
 
-	WithOnShutdown(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+	WithOnShutdown(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 		shutdownCalled = true
 		return nil
 	})(cfg)
 
 	ctx := context.Background()
-	cfg.hooks.executeBeforeOperation(ctx, "", nil, nil)
-	cfg.hooks.executeAfterOperation(ctx, "", nil, nil)
-	cfg.hooks.executeBeforeTransaction(ctx, "", nil, nil)
-	cfg.hooks.executeAfterTransaction(ctx, "", nil, nil)
-	cfg.hooks.executeOnShutdown(ctx, "", nil, nil)
+	cfg.hooks.executeBeforeOperation(ctx, "", nil, pgconn.CommandTag{}, nil)
+	cfg.hooks.executeAfterOperation(ctx, "", nil, pgconn.CommandTag{}, nil)
+	cfg.hooks.executeBeforeTransaction(ctx, "", nil, pgconn.CommandTag{}, nil)
+	cfg.hooks.executeAfterTransaction(ctx, "", nil, pgconn.CommandTag{}, nil)
+	cfg.hooks.executeOnShutdown(ctx, "", nil, pgconn.CommandTag{}, nil)
 
 	if !beforeOpCalled {
 		t.Error("WithBeforeOperation hook should have been called")
@@ -727,7 +728,7 @@ func TestConcurrentHookExecution(t *testing.T) {
 	var counter atomic.Int64
 
 	for i := 0; i < 10; i++ {
-		hooks.addHook(BeforeOperation, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		hooks.addHook(BeforeOperation, func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 			counter.Add(1)
 			return nil
 		})
@@ -739,7 +740,7 @@ func TestConcurrentHookExecution(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			ctx := context.Background()
-			_ = hooks.executeBeforeOperation(ctx, "SELECT 1", nil, nil)
+			_ = hooks.executeBeforeOperation(ctx, "SELECT 1", nil, pgconn.CommandTag{}, nil)
 		}()
 	}
 	wg.Wait()
@@ -758,7 +759,7 @@ func TestConcurrentOptionApplication(t *testing.T) {
 			cfg := newConnectConfig()
 			WithMaxConns(int32(n))(cfg)
 			WithMinConns(int32(n / 2))(cfg)
-			WithBeforeOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+			WithBeforeOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 				return nil
 			})(cfg)
 		}(i)

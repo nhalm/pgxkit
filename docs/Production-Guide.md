@@ -187,7 +187,7 @@ func setupProductionDB() *pgxkit.DB {
 
     db := pgxkit.NewDB()
     err := db.Connect(context.Background(), pgxkit.GetDSN(),
-        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
             operation := extractOperation(sql)
 
             // Log slow queries
@@ -257,7 +257,7 @@ func setupMetricsDB() *pgxkit.DB {
 
     db := pgxkit.NewDB()
     err := db.Connect(context.Background(), pgxkit.GetDSN(),
-        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
             start, ok := ctx.Value("metrics_start").(time.Time)
             if !ok {
                 return nil
@@ -619,7 +619,7 @@ func (cb *CircuitBreaker) recordSuccess() {
 func setupErrorHandlingDB() *pgxkit.DB {
     db := pgxkit.NewDB()
     err := db.Connect(context.Background(), pgxkit.GetDSN(),
-        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
             if operationErr == nil {
                 return nil
             }
@@ -682,7 +682,7 @@ func setupQueryOptimizationDB() *pgxkit.DB {
 
     db := pgxkit.NewDB()
     err := db.Connect(context.Background(), pgxkit.GetDSN(),
-        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
             start, ok := ctx.Value("start_time").(time.Time)
             if !ok {
                 return nil
