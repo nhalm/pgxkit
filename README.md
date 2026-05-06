@@ -1,42 +1,21 @@
 # pgxkit
 
-[![Go Version](https://img.shields.io/github/go-mod/go-version/nhalm/pgxkit)](https://golang.org/doc/devel/release.html)
-[![CI Status](https://github.com/nhalm/pgxkit/actions/workflows/ci.yml/badge.svg)](https://github.com/nhalm/pgxkit/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/nhalm/pgxkit)](https://goreportcard.com/report/github.com/nhalm/pgxkit)
-[![Release](https://img.shields.io/github/v/release/nhalm/pgxkit)](https://github.com/nhalm/pgxkit/releases)
+[![CI](https://github.com/nhalm/pgxkit/actions/workflows/ci.yml/badge.svg)](https://github.com/nhalm/pgxkit/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/nhalm/pgxkit/v2.svg)](https://pkg.go.dev/github.com/nhalm/pgxkit/v2)
+[![Go Report Card](https://goreportcard.com/badge/github.com/nhalm/pgxkit/v2)](https://goreportcard.com/report/github.com/nhalm/pgxkit/v2)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A production-ready PostgreSQL toolkit for Go applications — tool-agnostic utilities for connection pooling, observability, testing, and type helpers.
+A focused PostgreSQL toolkit for Go, built on `pgx`. Connection pool with read/write split, an extensible hook system, retry helpers, plan-regression and golden-transcript testing, graceful shutdown, and small type helpers — and nothing else.
 
-## Overview
-
-pgxkit is a **tool-agnostic** PostgreSQL toolkit that works with any approach to PostgreSQL development:
-
-- **Raw pgx usage** - Use pgxkit directly with pgx for maximum control
-- **Any code generation tool** - Works with sqlc, Skimatik, or any other tool
-- **Clean architecture** - Separate your database layer from your business logic
-- **Production-ready** - Built-in observability, retry logic, and graceful shutdown
-
-## Key Features
-
-- 🔄 **Read/Write Pool Abstraction** - Safe by default, optimized when needed
-- 🎣 **Extensible Hook System** - Add logging, tracing, metrics, circuit breakers
-- 🔁 **Smart Retry Logic** - PostgreSQL-aware error detection and exponential backoff
-- 🧪 **Testing Infrastructure** - Plan-regression test support to catch query plan changes
-- 🔧 **Type Helpers** - Seamless pgx type conversions
-- 📊 **Health Checks** - Built-in database connectivity monitoring
-- 🛡️ **Graceful Shutdown** - Production-ready lifecycle management
-- 🔀 **Executor Interface** - Write functions that work with both `*DB` and `*Tx`
-
-## Installation
+## Install
 
 ```bash
-go get github.com/nhalm/pgxkit
+go get github.com/nhalm/pgxkit/v2
 ```
 
-## Quick Start
+Go 1.25+ · PostgreSQL 12+.
 
-### Basic Usage
+## Quick start
 
 ```go
 package main
@@ -45,446 +24,162 @@ import (
     "context"
     "log"
 
-    "github.com/nhalm/pgxkit"
+    "github.com/nhalm/pgxkit/v2"
 )
 
 func main() {
     ctx := context.Background()
-
-    // Create and connect to database
     db := pgxkit.NewDB()
-
-    // Connect using environment variables or explicit DSN
-    err := db.Connect(ctx, "") // Uses POSTGRES_* env vars
-    if err != nil {
+    if err := db.Connect(ctx, ""); err != nil { // "" → POSTGRES_* env vars
         log.Fatal(err)
     }
     defer db.Shutdown(ctx)
 
-    // Execute queries (uses write pool by default - safe)
-    _, err = db.Exec(ctx, "INSERT INTO users (name) VALUES ($1)", "John")
-    if err != nil {
+    if _, err := db.Exec(ctx, "INSERT INTO users (name) VALUES ($1)", "Alice"); err != nil {
         log.Fatal(err)
     }
-
-    // Optimize reads with explicit read pool usage
     rows, err := db.ReadQuery(ctx, "SELECT id, name FROM users")
     if err != nil {
         log.Fatal(err)
     }
     defer rows.Close()
-
-    // Process results...
 }
 ```
 
-### With Read/Write Splitting
-
-```go
-db := pgxkit.NewDB()
-
-// Connect with separate read and write pools
-err := db.ConnectReadWrite(ctx, readDSN, writeDSN)
-if err != nil {
-    log.Fatal(err)
-}
-
-// Writes go to write pool (safe by default)
-db.Exec(ctx, "INSERT INTO users ...")
-
-// Reads can use read pool for optimization
-db.ReadQuery(ctx, "SELECT * FROM users")
-```
+`Query` / `QueryRow` / `Exec` go through the write pool. `ReadQuery` / `ReadQueryRow` go through the read pool when one is configured via `ConnectReadWrite`; otherwise they share the single pool.
 
 ## Configuration
 
-### Environment Variables
-
-pgxkit uses these environment variables when no DSN is provided:
-
-- `POSTGRES_HOST` (default: "localhost")
-- `POSTGRES_PORT` (default: 5432)
-- `POSTGRES_USER` (default: "postgres")
-- `POSTGRES_PASSWORD` (default: "")
-- `POSTGRES_DB` (default: "postgres")
-- `POSTGRES_SSLMODE` (default: "disable")
-
-### DSN Utilities
+If `dsn == ""`, pgxkit builds one from `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_SSLMODE`. `pgxkit.GetDSN()` returns the same string for tools that need it externally.
 
 ```go
-// Get DSN from environment variables
-dsn := pgxkit.GetDSN()
+db.Connect(ctx, "",
+    pgxkit.WithMaxConns(25),
+    pgxkit.WithMinConns(5),
+    pgxkit.WithMaxConnLifetime(time.Hour),
+)
 
-// Use with external tools
-dsn := pgxkit.GetDSN()
+// Or with read/write split:
+db.ConnectReadWrite(ctx, replicaDSN, primaryDSN)
 ```
 
-## Hooks System
+## Hooks
 
-Add observability and custom functionality through connect options:
+`HookFunc` is `func(ctx, sql, args, tag pgconn.CommandTag, err error) error`. `tag` carries the real command tag for `AfterOperation` on Exec; it's the zero value everywhere else (including `AfterOperation` on Query — pgx doesn't fill the tag until rows are closed).
 
 ```go
-db := pgxkit.NewDB()
-err := db.Connect(ctx, dsn,
-    // Logging hook
-    pgxkit.WithBeforeOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
-        log.Printf("Executing: %s", sql)
+db.Connect(ctx, "",
+    pgxkit.WithBeforeOperation(func(ctx context.Context, sql string, _ []interface{}, _ pgconn.CommandTag, _ error) error {
+        slog.InfoContext(ctx, "query", "sql", sql)
         return nil
     }),
-    // Metrics hook
-    pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
-        if operationErr != nil {
-            metrics.IncrementCounter("db.errors")
+    pgxkit.WithAfterOperation(func(ctx context.Context, _ string, _ []interface{}, tag pgconn.CommandTag, err error) error {
+        if err != nil {
+            metrics.QueryErrors.Inc()
+        } else if tag.String() != "" { // Exec
+            metrics.RowsAffected.Add(float64(tag.RowsAffected()))
         }
-        return nil
-    }),
-    // Connection setup
-    pgxkit.WithOnConnect(func(conn *pgx.Conn) error {
-        log.Println("New connection established")
         return nil
     }),
 )
 ```
 
-### Available Options
+Lifecycle hooks: `WithBeforeOperation`, `WithAfterOperation`, `WithBeforeTransaction`, `WithAfterTransaction`, `WithOnShutdown`. Connection-level hooks: `WithOnConnect`, `WithOnDisconnect`, `WithOnAcquire`, `WithOnRelease`.
 
-**Pool configuration:**
-- `WithMaxConns(n int32)` - Maximum connections in pool
-- `WithMinConns(n int32)` - Minimum connections in pool
-- `WithMaxConnLifetime(d time.Duration)` - Maximum connection lifetime
-- `WithMaxConnIdleTime(d time.Duration)` - Maximum idle time
+## Retry
 
-**Operation hooks:**
-- `WithBeforeOperation(fn)` - Before any query/exec
-- `WithAfterOperation(fn)` - After any query/exec
-- `WithBeforeTransaction(fn)` - Before transaction starts
-- `WithAfterTransaction(fn)` - After transaction completes
-- `WithOnShutdown(fn)` - During graceful shutdown
-
-**Connection hooks:**
-- `WithOnConnect(fn)` - When new connection is established
-- `WithOnDisconnect(fn)` - When connection is closed
-- `WithOnAcquire(fn)` - When connection is acquired from pool
-- `WithOnRelease(fn)` - When connection is returned to pool
-
-## Retry Logic
-
-### RetryOperation Function
+`RetryOperation` retries transient PostgreSQL errors (serialization failures, deadlocks, connection drops). Constraint violations and other deterministic errors pass through.
 
 ```go
-// Retry with default settings:
-// - 3 retry attempts
-// - 100ms initial delay
-// - 1s maximum delay
-// - 2x exponential backoff
 err := pgxkit.RetryOperation(ctx, func(ctx context.Context) error {
-    _, err := db.Exec(ctx, "INSERT INTO users (name, email) VALUES ($1, $2)",
-        "John Doe", "john@example.com")
+    _, err := db.Exec(ctx, "UPDATE accounts SET balance = balance - $1 WHERE id = $2", amt, id)
     return err
-})
-
-// Retry with custom configuration
-err = pgxkit.RetryOperation(ctx, func(ctx context.Context) error {
-    rows, err := db.Query(ctx, "SELECT * FROM users")
-    if err != nil {
-        return err
-    }
-    defer rows.Close()
-    // Process rows...
-    return nil
-}, pgxkit.WithMaxRetries(5), pgxkit.WithMaxDelay(5*time.Second))
-
-// Retry with timeout using context.WithTimeout
-ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-defer cancel()
-user, err := pgxkit.Retry(ctx, func(ctx context.Context) (*User, error) {
-    return getUserFromDatabase(ctx)
-}, pgxkit.WithMaxRetries(3))
+}, pgxkit.WithMaxRetries(5))
 ```
 
-### Timeout Behavior
-
-The timeout (set via `context.WithTimeout`) applies to **all retry attempts combined**, not per-attempt. If your timeout is 5 seconds and the first attempt takes 3 seconds, subsequent retries share the remaining 2 seconds.
-
-### Smart Error Detection
-
-pgxkit automatically detects which PostgreSQL errors are worth retrying:
-
-| Error Type | Retries? | Examples |
-|------------|----------|----------|
-| Network timeouts | Yes | context deadline exceeded during dial |
-| Connection failures | Yes | connection refused, connection reset |
-| PostgreSQL connection errors | Yes | 08000, 08003, 08006 |
-| Server shutdown | Yes | 57P01, 57P02, 57P03 |
-| Serialization/deadlock | Yes | 40001, 40P01 |
-| Context cancellation | No | context canceled |
-| No rows found | No | pgx.ErrNoRows |
-| Constraint violations | No | unique_violation, foreign_key_violation |
-| Syntax errors | No | syntax_error |
-
-```go
-// Check if an error would be retried
-if pgxkit.IsRetryableError(err) {
-    log.Println("Transient error - would retry")
-} else {
-    log.Println("Permanent error - would not retry")
-}
-```
-
-## Health Checks
-
-```go
-// Check database connectivity
-if db.IsReady(ctx) {
-    log.Println("Database is ready")
-}
-
-// Detailed health check
-if err := db.HealthCheck(ctx); err != nil {
-    log.Printf("Database health check failed: %v", err)
-}
-```
+The typed form `pgxkit.Retry[T]` returns a value. The retry budget is the context deadline — all attempts share it.
 
 ## Testing
 
-### Running the Test Suite
-
-This repo uses a `Makefile` as the single entry point for tests, lint, and
-benchmarks — both locally and in CI. Always use the make targets so the two
-stay in sync.
-
 ```bash
-make test-db-up    # start a containerized Postgres on a free host port
-make test          # run the full suite
-make test-db-down  # tear down when done
+make test-db-up    # containerized Postgres on a free port
+make test
+make test-db-down
 ```
 
-Other targets: `make test-coverage`, `make coverage-html`, `make bench`,
-`make lint`, `make help`.
-
-Requires Docker. To use an existing Postgres instead, set `TEST_DATABASE_URL`
-and run `go test ./...` directly.
-
-### Basic Testing
+`make` is the canonical entry point — see the project Makefile for `test-coverage`, `bench`, `lint`, etc.
 
 ```go
-func TestUserOperations(t *testing.T) {
-    testDB := pgxkit.NewTestDB()
-    ctx := context.Background()
-    err := testDB.Connect(ctx, "") // Uses TEST_DATABASE_URL env var
-    if err != nil {
-        t.Skip("Test database not available")
-    }
-    defer testDB.Shutdown(ctx)
-
-    err = testDB.Setup()
-    if err != nil {
-        t.Skip("Test database setup failed")
-    }
-    defer testDB.Clean()
-
-    // Use testDB.DB for your tests
-    _, err = testDB.Exec(ctx, "INSERT INTO users ...")
-    // ... test assertions
+func TestThing(t *testing.T) {
+    testDB := pgxkit.RequireDB(t) // skips when TEST_DATABASE_URL is unset
+    // ... use testDB.DB ...
 }
 ```
 
-### Plan-Regression Testing
+### Plan-regression
+
+`AssertPlan` captures `EXPLAIN (FORMAT JSON, COSTS OFF)` per query and compares to `testdata/plans/<name>.json`. A plan-shape change (index-scan → seq-scan, hash-join → nested-loop, etc.) fails with a unified diff.
 
 ```go
-func TestUserQueries(t *testing.T) {
-    testDB := pgxkit.NewTestDB()
-    ctx := context.Background()
-    err := testDB.Connect(ctx, "")
-    if err != nil {
-        t.Skip("Test database not available")
-    }
-    defer testDB.Shutdown(ctx)
-
-    testDB.Setup()
-    defer testDB.Clean()
-
-    db := testDB.EnableAssertPlan("TestUserQueries")
-
-    rows, err := db.Query(ctx, "SELECT * FROM users WHERE active = true")
-    // ... more queries
-
-    // First run writes testdata/plans/TestUserQueries.json; later runs fail
-    // with a unified diff on plan-shape change. Regenerate with `go test -overwrite-plan`.
-    db.AssertPlan(t, "TestUserQueries")
-}
+db := testDB.EnableAssertPlan("TestUserSummary")
+_, _ = db.Query(ctx, "SELECT ...")
+db.AssertPlan(t, "TestUserSummary")
 ```
 
-### Golden Transcript Testing
+Refresh: `go test -overwrite-plan`.
+
+### Golden transcript
+
+`AssertGolden` records the ordered event stream (`BEGIN`, every `Query`/`Exec` with SQL + normalized args, `rows_affected` for Exec, `COMMIT`/`ROLLBACK`) and compares to `testdata/golden/<name>.json`. Catches an extra UPDATE, missing INSERT, different argument, `COMMIT` becoming `ROLLBACK`.
 
 ```go
-func TestCreateOrder(t *testing.T) {
-    testDB := pgxkit.NewTestDB()
-    ctx := context.Background()
-    err := testDB.Connect(ctx, "")
-    if err != nil {
-        t.Skip("Test database not available")
-    }
-    defer testDB.Shutdown(ctx)
-
-    // Captures BEGIN/QUERY/COMMIT/ROLLBACK events with normalized args and rows.
-    golden := testDB.EnableGolden("TestCreateOrder")
-
-    // ... call the code under test using golden as the DB ...
-
-    // Writes testdata/golden/TestCreateOrder.json on first run; diffs the
-    // transcript on subsequent runs. Use `go test -overwrite-golden` to refresh.
-    golden.AssertGolden(t, "TestCreateOrder")
-}
+golden := testDB.EnableGolden("TestCreateOrder")
+// ... run code under test ...
+golden.AssertGolden(t, "TestCreateOrder")
 ```
 
-## Type Helpers
+Refresh: `go test -overwrite-golden`.
 
-Seamless conversions between Go types and pgx types:
+## Type helpers
+
+Thin converters between Go types and pgx's `pgtype.*`. See the [API reference](../../wiki/API-Reference#type-helpers) for the full list.
 
 ```go
-// String conversions
 pgxText := pgxkit.ToPgxText(&myString)
-stringPtr := pgxkit.FromPgxText(pgxText)
-
-// Numeric conversions
-pgxInt := pgxkit.ToPgxInt8(&myInt64)
-intPtr := pgxkit.FromPgxInt8(pgxInt)
-
-// UUID conversions
+str     := pgxkit.FromPgxText(pgxText)
 pgxUUID := pgxkit.ToPgxUUID(myUUID)
-uuid := pgxkit.FromPgxUUID(pgxUUID)
-
-// Time conversions
-pgxTime := pgxkit.ToPgxTimestamptz(&myTime)
-timePtr := pgxkit.FromPgxTimestamptz(pgxTime)
-
-// Array conversions
-pgxArray := pgxkit.ToPgxTextArray(myStringSlice)
-stringSlice := pgxkit.FromPgxTextArray(pgxArray)
 ```
 
-## Production Features
+## Graceful shutdown
 
-### Graceful Shutdown
+`db.Shutdown(ctx)` waits for active operations (including in-flight transactions started by `BeginTx`), runs `OnShutdown` hooks, then closes the pools.
 
 ```go
-// Graceful shutdown with timeout
+sig := make(chan os.Signal, 1)
+signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+<-sig
 ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 defer cancel()
-
-err := db.Shutdown(ctx)
-if err != nil {
-    log.Printf("Shutdown completed with warnings: %v", err)
-}
+_ = db.Shutdown(ctx)
 ```
 
-### Connection Statistics
+## Code generation
+
+`*pgxkit.DB` implements the same `Query`/`QueryRow`/`Exec` shape generators expect, and `db.WritePool()` / `db.ReadPool()` return `*pgxpool.Pool` for tools that want it directly.
 
 ```go
-// Get pool statistics
-stats := db.Stats()          // Write pool stats
-readStats := db.ReadStats()  // Read pool stats (if using read/write split)
-
-log.Printf("Active connections: %d", stats.AcquiredConns())
-log.Printf("Idle connections: %d", stats.IdleConns())
-```
-
-### Error Handling
-
-```go
-// Structured error types
-err := pgxkit.NewNotFoundError("User", userID)
-err := pgxkit.NewValidationError("Email", "create", "address", "invalid format", nil)
-err := pgxkit.NewDatabaseError("Order", "query", originalErr)
-
-// Type checking
-var notFoundErr *pgxkit.NotFoundError
-if errors.As(err, &notFoundErr) {
-    // Handle not found error
-}
-```
-
-## Architecture
-
-pgxkit follows these design principles:
-
-1. **Safety First** - All default methods use write pool for consistency
-2. **Explicit Optimization** - Use `ReadQuery()` methods for read optimization
-3. **Tool Agnostic** - Works with any PostgreSQL development approach
-4. **Extensible** - Hook system for custom functionality
-5. **Production Ready** - Built-in observability and lifecycle management
-
-## Examples
-
-### With Raw pgx
-
-```go
-db := pgxkit.NewDB()
-db.Connect(ctx, "postgres://...")
-
-// Use pgx directly with pgxkit utilities
-rows, err := db.Query(ctx, "SELECT * FROM users")
-for rows.Next() {
-    var user User
-    err := rows.Scan(&user.ID, &user.Name)
-    // ...
-}
-```
-
-### With Any Code Generation Tool
-
-```go
-// Works with sqlc, Skimatik, or any other tool
-db := pgxkit.NewDB()
-db.Connect(ctx, "postgres://...")
-
-// Use your generated code with pgxkit's connection
-queries := sqlc.New(db.GetPool()) // or your tool's constructor
-users, err := queries.GetAllUsers(ctx)
-```
-
-### With Hooks for Observability
-
-```go
-db := pgxkit.NewDB()
-err := db.Connect(ctx, dsn,
-    // Add tracing
-    pgxkit.WithBeforeOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
-        span := trace.SpanFromContext(ctx)
-        span.SetAttributes(attribute.String("db.statement", sql))
-        return nil
-    }),
-    // Add metrics
-    pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
-        status := "success"
-        if operationErr != nil {
-            status = "error"
-        }
-        queryCounter.WithLabelValues(status).Inc()
-        return nil
-    }),
-)
+queries := sqlc.New(db.WritePool())
 ```
 
 ## Documentation
 
-**[Visit the pgxkit Wiki](../../wiki)** - Complete documentation with examples and guides
+Full docs are in the [wiki](../../wiki):
 
-### Quick Links
-- **[Getting Started](../../wiki/Getting-Started)** - Setup and basic usage
-- **[API Reference](../../wiki/API-Reference)** - Complete API documentation
-- **[Examples](../../wiki/Examples)** - Practical code examples and use cases
-- **[Performance Guide](../../wiki/Performance-Guide)** - Optimization strategies
-- **[Production Guide](../../wiki/Production-Guide)** - Deployment best practices
-- **[Testing Guide](../../wiki/Testing-Guide)** - Testing strategies and plan-regression tests
-- **[FAQ](../../wiki/FAQ)** - Frequently asked questions
-
-## Contributing
-
-We welcome contributions! Please see our **[Contributing Guide](../../wiki/Contributing)** for details.
+- [Getting Started](../../wiki/Getting-Started) · [Examples](../../wiki/Examples)
+- [API Reference](../../wiki/API-Reference)
+- [Performance](../../wiki/Performance-Guide) · [Production](../../wiki/Production-Guide) · [Testing](../../wiki/Testing-Guide)
+- [FAQ](../../wiki/FAQ) · [Contributing](../../wiki/Contributing)
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
-
+MIT — see [LICENSE](LICENSE).
