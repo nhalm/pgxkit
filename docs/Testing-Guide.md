@@ -636,11 +636,6 @@ golden := testDB.EnableGolden("TestCreateOrder",
 
 Return `(replacement, true)` to take over normalization for the value, or `(nil, false)` to fall through to the next custom normalizer or to the defaults.
 
-### Limitations
-
-- `golden`-recorded `pgx.Rows` materializes data once; `RawValues()` returns nil and the wrapper is not bound to a live connection (`Conn()` returns nil). `Scan` covers the common destination kinds (strings, numerics, bools, time.Time, byte slices, `*any`, types implementing `sql.Scanner`, plus a reflect-based fallback for assignable types).
-- Concurrent fan-out within a single scenario is out of scope — captured order would be non-deterministic.
-
 ## Testing Patterns
 
 ### Table-Driven Tests
