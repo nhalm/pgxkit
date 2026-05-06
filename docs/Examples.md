@@ -564,6 +564,8 @@ func TestUserQueries(t *testing.T) {
     // Plan-regression test will assert the structural query plan is unchanged.
     // Result rows are NOT compared - assert those yourself.
     require.Len(t, users, 3)
+
+    db.AssertPlan(t, "TestUserQueries")
 }
 ```
 

@@ -501,6 +501,8 @@ func TestUserQueries_Plan(t *testing.T) {
         `)
         require.NoError(t, err)
     })
+
+    db.AssertPlan(t, "TestUserQueries_Plan")
 }
 ```
 
@@ -560,6 +562,8 @@ func TestPerformanceRegression(t *testing.T) {
         // Wall-clock duration is asserted explicitly above; the
         // plan-regression test does not measure execution time.
     })
+
+    db.AssertPlan(t, "TestPerformanceRegression")
 }
 ```
 

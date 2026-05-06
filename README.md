@@ -304,17 +304,14 @@ func TestUserQueries(t *testing.T) {
     testDB.Setup()
     defer testDB.Clean()
 
-    // Enable plan-regression hooks - captures EXPLAIN (FORMAT JSON, COSTS OFF) plans automatically
     db := testDB.EnableAssertPlan("TestUserQueries")
 
-    // These queries will have their structural plans captured
     rows, err := db.Query(ctx, "SELECT * FROM users WHERE active = true")
     // ... more queries
 
-    // Plans are saved to testdata/plans/TestUserQueries_query_1.json, etc.
-    // Future runs assert the plan shape is unchanged (e.g. seq-scan vs index-scan,
-    // nested-loop vs hash-join, new sort node, different join order).
-    // This does NOT assert anything about query result rows.
+    // First run writes testdata/plans/TestUserQueries.json; later runs fail
+    // with a unified diff on plan-shape change. Regenerate with `go test -overwrite-plan`.
+    db.AssertPlan(t, "TestUserQueries")
 }
 ```
 

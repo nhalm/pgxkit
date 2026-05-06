@@ -3,6 +3,7 @@ package pgxkit
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -144,18 +145,11 @@ func cleanupGolden(testName string) error {
 	return nil
 }
 
-// EnableAssertPlan returns a new DB instance configured to capture query
-// plans for plan-regression testing. For each eligible query, it issues an
-// EXPLAIN (FORMAT JSON, COSTS OFF) and records the structural plan so it
-// can be diffed against a baseline. The testName is used to name the plan
-// file under testdata/plans. Use AssertPlan after test execution to compare
-// captured plans against the baseline.
-//
-// Example:
-//
-//	planDB := testDB.EnableAssertPlan("user_queries")
-//	// run queries using planDB
-//	planDB.AssertPlan(t, "user_queries")
+var overwritePlan = flag.Bool("overwrite-plan", false, "regenerate testdata/plans baselines instead of asserting")
+
+// EnableAssertPlan returns a *DB that captures the structural EXPLAIN plan
+// of each SELECT/INSERT/UPDATE/DELETE/WITH query into memory. Call AssertPlan
+// to compare against testdata/plans/<testName>.json.
 func (tdb *TestDB) EnableAssertPlan(testName string) *DB {
 	planDB := &DB{
 		readPool:  tdb.readPool,
@@ -164,46 +158,38 @@ func (tdb *TestDB) EnableAssertPlan(testName string) *DB {
 	}
 
 	planHook := &assertPlanHook{
-		testName:     testName,
-		queryCounter: 0,
-		mu:           sync.Mutex{},
-		db:           planDB,
+		testName: testName,
+		db:       planDB,
 	}
-
+	planDB.planHook = planHook
 	planDB.hooks.addHook(BeforeOperation, planHook.captureExplainPlan)
 
 	return planDB
 }
 
-// assertPlanHook handles plan-regression assertion functionality.
 type assertPlanHook struct {
-	testName     string
-	queryCounter int
-	mu           sync.Mutex
-	db           *DB
+	testName string
+	mu       sync.Mutex
+	plans    []QueryPlan
+	db       *DB
 }
 
-// QueryPlan represents a captured structural query plan.
-// It stores the SQL statement and the JSON plan output for use in
-// plan-regression comparisons.
+// QueryPlan is one captured structural query plan.
 type QueryPlan struct {
 	Query int                      `json:"query"`
 	SQL   string                   `json:"sql"`
 	Plan  []map[string]interface{} `json:"plan"`
 }
 
-// captureExplainPlan captures structural EXPLAIN plans for queries.
 func (g *assertPlanHook) captureExplainPlan(ctx context.Context, sql string, args []interface{}, operationErr error) error {
-	if g.db == nil {
+	if g.db == nil || g.db.writePool == nil {
 		return nil
 	}
 
 	upperSQL := strings.ToUpper(strings.TrimSpace(sql))
-
 	if strings.HasPrefix(upperSQL, "EXPLAIN") {
 		return nil
 	}
-
 	if !strings.HasPrefix(upperSQL, "SELECT") &&
 		!strings.HasPrefix(upperSQL, "INSERT") &&
 		!strings.HasPrefix(upperSQL, "UPDATE") &&
@@ -212,28 +198,16 @@ func (g *assertPlanHook) captureExplainPlan(ctx context.Context, sql string, arg
 		return nil
 	}
 
-	g.mu.Lock()
-	g.queryCounter++
-	currentQuery := g.queryCounter
-	g.mu.Unlock()
-
 	explainSQL := fmt.Sprintf("EXPLAIN (FORMAT JSON, COSTS OFF) %s", sql)
 
-	if g.db.writePool == nil {
-		return nil
-	}
-
 	var explainResult string
-
 	rows, err := g.db.writePool.Query(ctx, explainSQL, args...)
 	if err != nil {
 		return nil
 	}
 	defer rows.Close()
-
 	if rows.Next() {
-		err = rows.Scan(&explainResult)
-		if err != nil {
+		if err := rows.Scan(&explainResult); err != nil {
 			return nil
 		}
 	}
@@ -246,118 +220,90 @@ func (g *assertPlanHook) captureExplainPlan(ctx context.Context, sql string, arg
 		return nil
 	}
 
-	queryPlan := QueryPlan{
-		Query: currentQuery,
+	g.mu.Lock()
+	g.plans = append(g.plans, QueryPlan{
+		Query: len(g.plans) + 1,
 		SQL:   sql,
 		Plan:  explainData,
-	}
-
-	err = g.appendToPlanFile(queryPlan)
-	if err != nil {
-		return nil
-	}
+	})
+	g.mu.Unlock()
 
 	return nil
 }
 
-// appendToPlanFile appends the query plan to the plan file.
-func (g *assertPlanHook) appendToPlanFile(queryPlan QueryPlan) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
-	planFile := fmt.Sprintf("testdata/plans/%s.json", g.testName)
-
-	dir := filepath.Dir(planFile)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create directory %s: %w", dir, err)
-	}
-
-	var existingPlans []QueryPlan
-	if data, err := os.ReadFile(planFile); err == nil {
-		if len(data) > 0 {
-			if err := json.Unmarshal(data, &existingPlans); err != nil {
-				return fmt.Errorf("failed to parse existing plan file %s: %w", planFile, err)
-			}
-		}
-	}
-
-	existingPlans = append(existingPlans, queryPlan)
-
-	data, err := json.MarshalIndent(existingPlans, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal query plans: %w", err)
-	}
-
-	err = os.WriteFile(planFile, data, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to write plan file %s: %w", planFile, err)
-	}
-
-	return nil
+func planPath(name string) string {
+	return filepath.Join("testdata", "plans", name+".json")
 }
 
-// AssertPlan compares captured query plans against a baseline file.
-// On first run, it creates a baseline file from the current plan output.
-// On subsequent runs, it compares the current plans against the baseline
-// and reports test failures for any query count, SQL, or plan changes.
+func marshalPlans(plans []QueryPlan) ([]byte, error) {
+	if plans == nil {
+		plans = []QueryPlan{}
+	}
+	data, err := json.MarshalIndent(plans, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	data = append(data, '\n')
+	return data, nil
+}
+
+// AssertPlan compares the captured plans against testdata/plans/<testName>.json,
+// writing the baseline on first run or with -overwrite-plan, and failing with
+// a unified diff on mismatch. testName must match EnableAssertPlan's.
 func (db *DB) AssertPlan(t *testing.T, testName string) {
-	planFile := fmt.Sprintf("testdata/plans/%s.json", testName)
+	t.Helper()
+	db.assertPlan(t, testName)
+}
 
-	data, err := os.ReadFile(planFile)
+func (db *DB) assertPlan(t goldenT, testName string) {
+	t.Helper()
+	if db.planHook == nil {
+		t.Errorf("AssertPlan called on a DB without an active plan hook; use TestDB.EnableAssertPlan first")
+		return
+	}
+	if db.planHook.testName != testName {
+		t.Errorf("AssertPlan testName %q does not match hook testName %q", testName, db.planHook.testName)
+		return
+	}
+
+	db.planHook.mu.Lock()
+	plans := append([]QueryPlan(nil), db.planHook.plans...)
+	db.planHook.mu.Unlock()
+
+	current, err := marshalPlans(plans)
 	if err != nil {
-		t.Errorf("Failed to read plan file %s: %v", planFile, err)
+		t.Errorf("failed to marshal plans: %v", err)
 		return
 	}
 
-	var currentPlans []QueryPlan
-	if err := json.Unmarshal(data, &currentPlans); err != nil {
-		t.Errorf("Failed to parse plan file %s: %v", planFile, err)
-		return
-	}
+	path := planPath(testName)
+	_, statErr := os.Stat(path)
+	missing := os.IsNotExist(statErr)
 
-	baselineFile := planFile + ".baseline"
-	if _, err := os.Stat(baselineFile); os.IsNotExist(err) {
-		err = os.WriteFile(baselineFile, data, 0644)
-		if err != nil {
-			t.Errorf("Failed to create baseline file: %v", err)
+	if missing || (overwritePlan != nil && *overwritePlan) {
+		if err := writeBaseline(path, current); err != nil {
+			t.Errorf("%v", err)
 			return
 		}
-		t.Logf("Created plan baseline: %s", baselineFile)
+		if missing {
+			t.Logf("created plan baseline: %s", path)
+		} else {
+			t.Logf("regenerated plan baseline: %s", path)
+		}
 		return
 	}
 
-	baselineData, err := os.ReadFile(baselineFile)
+	baseline, err := os.ReadFile(path)
 	if err != nil {
-		t.Errorf("Failed to read baseline file %s: %v", baselineFile, err)
+		t.Errorf("failed to read plan file %s: %v", path, err)
 		return
 	}
 
-	var baselinePlans []QueryPlan
-	if err := json.Unmarshal(baselineData, &baselinePlans); err != nil {
-		t.Errorf("Failed to parse baseline file %s: %v", baselineFile, err)
+	diff, ok := unifiedDiff(path, baseline, current)
+	if ok {
 		return
 	}
-
-	if len(currentPlans) != len(baselinePlans) {
-		t.Errorf("Query count mismatch: expected %d queries, got %d", len(baselinePlans), len(currentPlans))
-		return
-	}
-
-	for i, current := range currentPlans {
-		baseline := baselinePlans[i]
-
-		if current.SQL != baseline.SQL {
-			t.Errorf("Query %d SQL mismatch:\nExpected: %s\nGot: %s", i+1, baseline.SQL, current.SQL)
-			continue
-		}
-
-		currentPlanJSON, _ := json.Marshal(current.Plan)
-		baselinePlanJSON, _ := json.Marshal(baseline.Plan)
-
-		if string(currentPlanJSON) != string(baselinePlanJSON) {
-			t.Errorf("Query %d plan regression detected:\nSQL: %s\nPlan changed from baseline", i+1, current.SQL)
-		}
-	}
+	t.Errorf("plan regression for %s\n%s", path, diff)
 }
 
 // RequireDB ensures a test database is available or skips the test.
@@ -379,27 +325,14 @@ func RequireDB(t *testing.T) *TestDB {
 	return testDB
 }
 
-// cleanupPlan removes all plan-regression files for the specified test name —
-// both the captured plan file and its baseline. Used internally by pgxkit's
-// own tests so generated baselines don't pollute the repo. Not part of the
-// public API: end users should let baselines persist (that's the whole point
-// of plan-regression testing) and remove a baseline file by hand if they
-// want to invalidate it.
+// cleanupPlan removes a plan baseline file. Internal helper for pgxkit tests.
 func cleanupPlan(testName string) error {
 	if testName == "" {
 		return nil
 	}
-
-	files := []string{
-		fmt.Sprintf("testdata/plans/%s.json", testName),
-		fmt.Sprintf("testdata/plans/%s.json.baseline", testName),
+	path := planPath(testName)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove plan file %s: %w", path, err)
 	}
-
-	for _, file := range files {
-		if err := os.Remove(file); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("failed to remove plan file %s: %w", file, err)
-		}
-	}
-
 	return nil
 }

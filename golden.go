@@ -324,21 +324,19 @@ func marshalEvents(events []transcriptEvent) ([]byte, error) {
 	return data, nil
 }
 
-// writeGolden writes pretty-printed transcript bytes, creating the directory.
-func writeGolden(path string, data []byte) error {
+// writeBaseline writes bytes to path, creating the directory.
+func writeBaseline(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("failed to create golden directory: %w", err)
+		return fmt.Errorf("failed to create baseline directory: %w", err)
 	}
 	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return fmt.Errorf("failed to write golden file %s: %w", path, err)
+		return fmt.Errorf("failed to write baseline file %s: %w", path, err)
 	}
 	return nil
 }
 
-// compareGolden compares baseline to current bytes. If they match, ok is true
-// and diff is empty. Otherwise diff is a unified diff string. Extracted as a
-// pure function so it can be unit tested without a *testing.T.
-func compareGolden(path string, baseline, current []byte) (string, bool) {
+// unifiedDiff returns ("", true) if equal, otherwise (diff, false).
+func unifiedDiff(path string, baseline, current []byte) (string, bool) {
 	if bytes.Equal(baseline, current) {
 		return "", true
 	}
@@ -378,7 +376,7 @@ func assertGolden(t goldenT, recorder *transcriptRecorder) {
 	missing := os.IsNotExist(statErr)
 
 	if missing || (overwriteGolden != nil && *overwriteGolden) {
-		if err := writeGolden(path, current); err != nil {
+		if err := writeBaseline(path, current); err != nil {
 			t.Errorf("%v", err)
 			return
 		}
@@ -396,7 +394,7 @@ func assertGolden(t goldenT, recorder *transcriptRecorder) {
 		return
 	}
 
-	diff, ok := compareGolden(path, baseline, current)
+	diff, ok := unifiedDiff(path, baseline, current)
 	if ok {
 		return
 	}

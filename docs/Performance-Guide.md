@@ -588,6 +588,8 @@ func TestQueryPerformance(t *testing.T) {
             t.Error("Expected search results")
         }
     })
+
+    db.AssertPlan(t, "TestQueryPerformance")
 }
 ```
 

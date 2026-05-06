@@ -3,7 +3,6 @@ package pgxkit
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -105,44 +104,83 @@ func TestAssertPlan(t *testing.T) {
 	defer cleanupPlan("TestAssertPlan")
 }
 
-func TestCleanupPlan(t *testing.T) {
-	// Create temporary directory for test
-	tempDir := t.TempDir()
-
-	// Create some test plan files using the new naming pattern
-	planFiles := []string{
-		filepath.Join(tempDir, "testdata", "plans", "TestCleanup.json"),
-		filepath.Join(tempDir, "testdata", "plans", "TestCleanup.json.baseline"),
+func TestAssertPlan_RerunIsStable(t *testing.T) {
+	testDB := RequireDB(t)
+	if testDB == nil {
+		return
 	}
+	const name = "TestAssertPlan_RerunIsStable"
+	defer cleanupPlan(name)
+	_ = cleanupPlan(name)
 
-	for _, file := range planFiles {
-		err := os.MkdirAll(filepath.Dir(file), 0755)
-		if err != nil {
-			t.Fatalf("Failed to create directory: %v", err)
-		}
+	ctx := context.Background()
 
-		err = os.WriteFile(file, []byte(`[{"query": 1, "sql": "SELECT 1", "plan": []}]`), 0644)
-		if err != nil {
-			t.Fatalf("Failed to create test file: %v", err)
-		}
-	}
-
-	// Change to temp directory for cleanup
-	originalDir, _ := os.Getwd()
-	os.Chdir(tempDir)
-	defer os.Chdir(originalDir)
-
-	// Test cleanup
-	err := cleanupPlan("TestCleanup")
+	p1 := testDB.EnableAssertPlan(name)
+	rows, err := p1.Query(ctx, "SELECT 1")
 	if err != nil {
-		t.Errorf("cleanupPlan should not return error: %v", err)
+		t.Fatalf("query: %v", err)
+	}
+	rows.Close()
+	p1.AssertPlan(t, name)
+	if t.Failed() {
+		t.Fatalf("baseline run should pass")
 	}
 
-	// Verify files were removed
-	for _, file := range planFiles {
-		if _, err := os.Stat(file); !os.IsNotExist(err) {
-			t.Errorf("Plan file should have been removed: %s", file)
-		}
+	p2 := testDB.EnableAssertPlan(name)
+	rows, err = p2.Query(ctx, "SELECT 1")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	rows.Close()
+	p2.AssertPlan(t, name)
+}
+
+func TestAssertPlan_OverwriteRegeneratesBaseline(t *testing.T) {
+	testDB := RequireDB(t)
+	if testDB == nil {
+		return
+	}
+	const name = "TestAssertPlan_OverwriteRegeneratesBaseline"
+	defer cleanupPlan(name)
+	_ = cleanupPlan(name)
+
+	ctx := context.Background()
+
+	p1 := testDB.EnableAssertPlan(name)
+	rows, err := p1.Query(ctx, "SELECT 1")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	rows.Close()
+	p1.AssertPlan(t, name)
+	if t.Failed() {
+		t.Fatalf("baseline run should pass")
+	}
+	first, err := os.ReadFile(planPath(name))
+	if err != nil {
+		t.Fatalf("read baseline: %v", err)
+	}
+
+	old := *overwritePlan
+	*overwritePlan = true
+	defer func() { *overwritePlan = old }()
+
+	p2 := testDB.EnableAssertPlan(name)
+	rows, err = p2.Query(ctx, "SELECT 1 AS different_alias")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	rows.Close()
+	p2.AssertPlan(t, name)
+	if t.Failed() {
+		t.Fatalf("overwrite run should pass")
+	}
+	second, err := os.ReadFile(planPath(name))
+	if err != nil {
+		t.Fatalf("read regenerated baseline: %v", err)
+	}
+	if string(first) == string(second) {
+		t.Errorf("expected baseline to be regenerated under -overwrite-plan")
 	}
 }
 
