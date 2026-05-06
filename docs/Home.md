@@ -1,34 +1,28 @@
-# Welcome to pgxkit Wiki
+# pgxkit
 
-**pgxkit** is a lightweight, type-safe PostgreSQL toolkit for Go applications that provides a clean abstraction over pgx while maintaining performance and flexibility.
+A focused PostgreSQL toolkit for Go, built on `pgx`. pgxkit gives you a connection pool with read/write split, a hook system, retry helpers, plan-regression and golden-transcript testing, and graceful shutdown — and stays out of your way otherwise.
 
-## Quick Navigation
+## Documentation
 
-### Documentation
-- [Getting Started](Getting-Started) - Setup and basic usage
-- [API Reference](API-Reference) - Complete API documentation
-- [Examples](Examples) - Practical code examples and use cases
+- [Getting Started](Getting-Started) — install, connect, first queries
+- [Examples](Examples) — real patterns for hooks, retries, testing
+- [API Reference](API-Reference) — every public type and function
+- [Performance](Performance-Guide) — pool sizing, plan-regression, monitoring with `db.Stats()`
+- [Production](Production-Guide) — graceful shutdown, health checks, observability hooks
+- [Testing](Testing-Guide) — `RequireDB`, `EnableAssertPlan`, `EnableGolden`
+- [FAQ](FAQ) — quick answers
+- [Contributing](Contributing)
 
-### Performance & Production
-- [Performance Guide](Performance-Guide) - Optimization strategies and best practices
-- [Production Guide](Production-Guide) - Deployment and production considerations
-- [Testing Guide](Testing-Guide) - Testing strategies, plan-regression, and golden transcript tests
+## Features
 
-### Development
-- [Contributing](Contributing) - How to contribute to pgxkit
-- [FAQ](FAQ) - Frequently asked questions
+- Connection pool with optional read/write split (`Connect` / `ConnectReadWrite`).
+- Extensible hook system: `BeforeOperation`, `AfterOperation`, `BeforeTransaction`, `AfterTransaction`, `OnShutdown`, plus pgx connection-lifecycle hooks. `AfterOperation` receives the `pgconn.CommandTag` for Exec.
+- Retry helpers: `RetryOperation` and the typed `Retry[T]`, with PostgreSQL-aware error classification.
+- Plan-regression testing (`EnableAssertPlan` / `AssertPlan`) and golden-transcript testing (`EnableGolden` / `AssertGolden`).
+- Graceful shutdown with active-operation tracking.
+- Type helpers for clean conversion between Go and pgx types.
 
-## Key Features
-
-- **Type-safe operations** with Go generics
-- **Connection pooling** with read/write splitting
-- **Plan-regression testing** to catch query plan shape changes
-- **Golden transcript testing** to catch behavioral changes (extra/missing/reordered statements, different args, different rows)
-- **Extensible hooks** for monitoring and logging
-- **Production-ready** with graceful shutdown
-- **Zero dependencies** beyond pgx
-
-## Quick Start
+## Quick start
 
 ```go
 package main
@@ -36,46 +30,35 @@ package main
 import (
     "context"
     "log"
-    
-    "github.com/nhalm/pgxkit"
+
+    "github.com/nhalm/pgxkit/v2"
 )
 
 func main() {
-    // Connect to database
+    ctx := context.Background()
     db := pgxkit.NewDB()
-    err := db.Connect(context.Background(), "postgres://user:pass@localhost/db")
-    if err != nil {
+    if err := db.Connect(ctx, "postgres://user:pass@localhost/db"); err != nil {
         log.Fatal(err)
     }
-    defer db.Shutdown(context.Background())
-    
-    // Execute a query
+    defer db.Shutdown(ctx)
+
     var name string
-    err = db.QueryRow(context.Background(), 
-        "SELECT name FROM users WHERE id = $1", 1).Scan(&name)
-    if err != nil {
+    if err := db.QueryRow(ctx, "SELECT name FROM users WHERE id = $1", 1).Scan(&name); err != nil {
         log.Fatal(err)
     }
-    
-    log.Printf("User name: %s", name)
+    log.Println(name)
 }
 ```
 
-## Repository Information
+## Module
 
-- **GitHub**: [https://github.com/nhalm/pgxkit](https://github.com/nhalm/pgxkit)
-- **Go Module**: `github.com/nhalm/pgxkit`
-- **License**: MIT
-- **Go Version**: 1.21+
+- Module path: `github.com/nhalm/pgxkit/v2`
+- Go: 1.25+
+- License: MIT
+- Dependencies: `pgx`, `google/uuid`, `pmezard/go-difflib`
 
-## Community
+## Links
 
-- [Issues](https://github.com/nhalm/pgxkit/issues) - Report bugs or request features
-- [Discussions](https://github.com/nhalm/pgxkit/discussions) - Community discussions
-- [Pull Requests](https://github.com/nhalm/pgxkit/pulls) - Contribute code
+- [Repo](https://github.com/nhalm/pgxkit) · [Go package](https://pkg.go.dev/github.com/nhalm/pgxkit/v2) · [Issues](https://github.com/nhalm/pgxkit/issues)
 
-## Recent Updates
-
-This wiki is actively maintained and synchronized with the repository documentation. Check the [repository releases](https://github.com/nhalm/pgxkit/releases) for the latest updates.
-
---- 
+---

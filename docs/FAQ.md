@@ -1,768 +1,174 @@
-# Frequently Asked Questions
+# FAQ
 
 **[← Back to Home](Home)**
 
-Common questions and answers about pgxkit usage, configuration, and troubleshooting.
+## General
 
-## Table of Contents
+### Why pgxkit instead of pgx directly?
 
-1. [General Questions](#general-questions)
-2. [Setup and Configuration](#setup-and-configuration)
-3. [Performance and Optimization](#performance-and-optimization)
-4. [Testing](#testing)
-5. [Production Deployment](#production-deployment)
-6. [Troubleshooting](#troubleshooting)
-7. [Migration and Integration](#migration-and-integration)
+pgxkit is built on top of pgx and adds: read/write pool split, an extensible hook system, retry helpers, plan-regression testing, golden-transcript testing, graceful shutdown, and small type helpers. Use plain pgx for one-off scripts; reach for pgxkit when you want any of the above.
 
-## General Questions
+### Does pgxkit work with sqlc / skimatik / other code generators?
 
-### What is pgxkit and how is it different from other PostgreSQL libraries?
+Yes — `*pgxkit.DB` satisfies the same `Query`/`QueryRow`/`Exec` shape, and you can also pass `db.WritePool()` / `db.ReadPool()` to anything expecting `*pgxpool.Pool`.
 
-pgxkit is a **tool-agnostic** PostgreSQL toolkit that provides production-ready utilities while working with any PostgreSQL development approach. Unlike ORMs or query builders, pgxkit doesn't dictate how you write your queries - it works with:
-
-- Raw pgx usage
-- Code generation tools (sqlc, Skimatik, etc.)
-- Any existing PostgreSQL workflow
-
-**Key differences:**
-- **Safety first** - Uses write pool by default, explicit read optimization
-- **Extensible hooks** - Add logging, metrics, tracing without changing your queries
-- **Plan-regression testing** - Catches query plan shape changes (e.g. seq-scan to index-scan)
-- **Production features** - Retry logic, graceful shutdown, health checks built-in
-
-### Should I use pgxkit instead of pgx directly?
-
-pgxkit is built **on top of** pgx, not instead of it. You get all the benefits of pgx plus:
-
-- Connection pool abstraction with read/write splitting
-- Hook system for observability
-- Testing utilities including plan-regression tests
-- Retry logic for transient failures
-- Production-ready lifecycle management
-
-If you're building a production application, pgxkit provides valuable utilities. If you're writing a simple script or tool, direct pgx might be sufficient.
-
-### Is pgxkit compatible with code generation tools?
-
-Yes! pgxkit is specifically designed to be tool-agnostic. It works seamlessly with:
-
-- **sqlc** - Use pgxkit.DB directly or get underlying pools
-- **Skimatik** - Pass connection pools to generated code
-- **Custom code generation** - Any tool that accepts pgxpool.Pool
-- **Raw SQL** - Use pgxkit methods directly
-
-**Example with sqlc:**
 ```go
-db := pgxkit.NewDB()
-err := db.Connect(ctx, dsn)
-
-// Use directly with sqlc
-queries := sqlc.New(db)
-
-// Or get specific pools
-writeQueries := sqlc.New(db.WritePool())
-readQueries := sqlc.New(db.ReadPool())
+queries := sqlc.New(db.WritePool())
 ```
 
-## Setup and Configuration
+## Setup
 
-### How do I configure connection pools for my workload?
+### How do I size the connection pool?
 
-Pool sizing depends on your application characteristics:
+A reasonable starting point is `runtime.NumCPU() * 2` for CPU-bound, `* 4` for I/O-bound, and tune from `db.Stats()` under load. Set via DSN:
 
-**For CPU-bound workloads:**
 ```go
-maxConns := runtime.NumCPU() * 2  // 1-2 connections per core
-```
-
-**For I/O-bound workloads:**
-```go
-maxConns := runtime.NumCPU() * 4  // 2-4 connections per core
-```
-
-**Configuration example:**
-```go
-dsn := fmt.Sprintf("%s?pool_max_conns=%d&pool_min_conns=%d",
-    pgxkit.GetDSN(), maxConns, maxConns/4)
-```
-
-Monitor pool utilization and adjust based on your metrics:
-```go
-stats := db.Stats()
-utilization := float64(stats.AcquiredConns()) / float64(stats.MaxConns())
+dsn := fmt.Sprintf("%s?pool_max_conns=20&pool_min_conns=5", pgxkit.GetDSN())
 ```
 
 ### When should I use read/write splitting?
 
-Use read/write splitting when:
+When you have read replicas and your workload is read-heavy. Use `ConnectReadWrite` and call `ReadQuery` / `ReadQueryRow` for reads that can tolerate replica lag. Skip it for write-heavy workloads or when you need read-your-own-writes.
 
-- You have read replicas available
-- Your application is read-heavy (>70% read operations)
-- You want to optimize read performance
-- You have separate read and write database endpoints
+### What environment variables does pgxkit read?
 
-**Don't use it if:**
-- You only have a single database instance
-- Your application is write-heavy
-- You need strong consistency for all reads
+When `dsn == ""`, pgxkit builds a DSN from `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_SSLMODE`. `pgxkit.GetDSN()` returns the same string for tools that need it externally.
 
-**Setup:**
-```go
-err := db.ConnectReadWrite(ctx,
-    "postgres://user:pass@read-replica:5432/db",  // Read pool
-    "postgres://user:pass@primary:5432/db")       // Write pool
-```
-
-### How do I handle environment variables correctly?
-
-pgxkit uses standard PostgreSQL environment variables:
-
-```bash
-# Required
-export POSTGRES_HOST=localhost
-export POSTGRES_USER=myuser
-export POSTGRES_PASSWORD=mypassword
-export POSTGRES_DB=mydb
-
-# Optional (with defaults)
-export POSTGRES_PORT=5432          # default: 5432
-export POSTGRES_SSLMODE=require    # default: disable
-
-# Connection pool settings
-export POSTGRES_MAX_CONNS=20
-export POSTGRES_MIN_CONNS=5
-```
-
-**Using in code:**
-```go
-// Uses environment variables automatically
-err := db.Connect(ctx, "")
-
-// Or build DSN explicitly
-dsn := pgxkit.GetDSN()
-```
-
-## Performance and Optimization
-
-### How do I optimize read performance?
-
-1. **Use read methods when you have read/write splits:**
-```go
-// Instead of db.Query() (uses write pool)
-rows, err := db.ReadQuery(ctx, "SELECT * FROM users")
-row := db.ReadQueryRow(ctx, "SELECT name FROM users WHERE id = $1", id)
-```
-
-2. **Add appropriate database indexes:**
-```sql
-CREATE INDEX CONCURRENTLY idx_users_email ON users(email);
-CREATE INDEX CONCURRENTLY idx_users_active_created ON users(active, created_at DESC);
-```
-
-3. **Use LIMIT for large result sets:**
-```go
-rows, err := db.ReadQuery(ctx, "SELECT * FROM users ORDER BY created_at DESC LIMIT 100")
-```
-
-4. **Implement caching for frequently accessed data** - See [Performance Guide](Performance-Guide) for detailed strategies.
+## Performance
 
 ### How do I monitor performance?
 
-Configure hooks when connecting to add metrics collection:
+Two pgxkit features cover this:
+
+- `db.Stats()` (and `db.ReadStats()`) returns a `*pgxpool.Stat` with pool counters — feed it to your metrics layer.
+- `WithAfterOperation` fires for every `Query`/`Exec`. Track timing in the hook (start a timer in `WithBeforeOperation`, stop it here):
 
 ```go
-db := pgxkit.NewDB()
-err := db.Connect(ctx, "",
-    pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
-        duration := time.Since(start) // start from context
-
-        // Prometheus metrics
-        queryDuration.WithLabelValues(operation, status).Observe(duration.Seconds())
-        queryTotal.WithLabelValues(operation, status).Inc()
-
-        // Log slow queries
-        if duration > 100*time.Millisecond {
-            log.Printf("Slow query: %s (took %v)", sql, duration)
-        }
-
-        return nil
-    }),
-)
+pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, err error) error {
+    metrics.RecordQuery(sql, time.Since(timeFromCtx(ctx)), err)
+    return nil
+})
 ```
 
-Monitor connection pool utilization:
+### How do I do bulk inserts?
+
+`pgx.Batch` for moderate sizes; `tx.CopyFrom` for thousands of rows. Both work through pgxkit's `Tx`:
+
 ```go
-stats := db.Stats()
-utilization := float64(stats.AcquiredConns()) / float64(stats.MaxConns())
-log.Printf("Pool utilization: %.2f%%", utilization*100)
-```
-
-### What's the best way to handle bulk operations?
-
-Use batch operations for better performance:
-
-**For moderate batch sizes (< 1000 records):**
-```go
-batch := &pgx.Batch{}
-for _, user := range users {
-    batch.Queue("INSERT INTO users (name, email) VALUES ($1, $2)", user.Name, user.Email)
-}
-
-results := tx.SendBatch(ctx, batch)
-defer results.Close()
-```
-
-**For large datasets (1000+ records):**
-```go
-_, err := tx.CopyFrom(ctx,
+tx, _ := db.BeginTx(ctx, pgx.TxOptions{})
+defer tx.Rollback(ctx)
+_, err := tx.Tx().CopyFrom(ctx,
     pgx.Identifier{"users"},
     []string{"name", "email"},
-    pgx.CopyFromSlice(len(users), func(i int) ([]interface{}, error) {
-        return []interface{}{users[i].Name, users[i].Email}, nil
+    pgx.CopyFromSlice(len(users), func(i int) ([]any, error) {
+        return []any{users[i].Name, users[i].Email}, nil
     }),
 )
 ```
 
 ## Testing
 
-### How do I set up tests with pgxkit?
-
-Use the testing utilities for clean test setup:
+### How do I set up a test database?
 
 ```go
-func TestUserRepository(t *testing.T) {
-    // Setup test database
-    suite := NewTestSuite(t)
-    repo := NewUserRepository(suite.DB)
-
-    // Load test data using manual SQL (pgxkit does not provide built-in fixture loading)
-    _, err := suite.DB.Exec(suite.ctx, `
-        INSERT INTO users (id, name, email, active) VALUES
-        (1, 'John Doe', 'john@example.com', true),
-        (2, 'Jane Smith', 'jane@example.com', true)
-        ON CONFLICT (id) DO NOTHING
-    `)
-    require.NoError(t, err)
-
-    // Run your tests
-    users, err := repo.GetActiveUsers(suite.ctx)
-    require.NoError(t, err)
-    assert.Len(t, users, 2)
-}
-
-type TestSuite struct {
-    DB  *pgxkit.TestDB
-    ctx context.Context
-}
-
-func NewTestSuite(t *testing.T) *TestSuite {
-    return &TestSuite{
-        DB:  setupTestDB(t),
-        ctx: context.Background(),
-    }
+func TestThing(t *testing.T) {
+    testDB := pgxkit.RequireDB(t) // skips when TEST_DATABASE_URL is unset
+    // ... use testDB.DB ...
 }
 ```
 
-### What is plan-regression testing and when should I use it?
+`RequireDB` connects via `TEST_DATABASE_URL` and returns a `*TestDB` (which embeds `*DB`).
 
-Plan-regression testing captures the structural query plan via `EXPLAIN (FORMAT JSON, COSTS OFF)` and asserts it is unchanged across runs. It catches plan shape changes that often correlate with performance regressions: a seq-scan replacing an index-scan, a nested-loop turning into a hash-join, a new sort node appearing, or a different join order. It does NOT compare query result rows — assert those yourself in the test body.
+### When should I use Plan-Regression vs Golden testing?
 
-```go
-func TestComplexQuery_Plan(t *testing.T) {
-    testDB := setupTestDB(t)
-    db := testDB.EnableAssertPlan("TestComplexQuery")
+They answer different questions:
 
-    // Structural query plan will be captured and asserted
-    rows, err := db.Query(ctx, `
-        SELECT u.id, u.name, COUNT(o.id) as order_count
-        FROM users u
-        LEFT JOIN orders o ON u.id = o.user_id
-        GROUP BY u.id, u.name
-        ORDER BY order_count DESC
-    `)
-    require.NoError(t, err)
-    defer rows.Close()
+- **`AssertPlan`** — asserts the structural query plan (`EXPLAIN (FORMAT JSON, COSTS OFF)`). Catches a seq-scan replacing an index-scan, a different join order, an extra sort, etc. Doesn't look at data.
+- **`AssertGolden`** — asserts the ordered sequence of database events (`BEGIN`, every `Query`/`Exec` with SQL + normalized args, `rows_affected` for Exec, `COMMIT`/`ROLLBACK`). Catches an extra UPDATE, missing INSERT, different argument, or `COMMIT` that became `ROLLBACK`.
 
-    db.AssertPlan(t, "TestComplexQuery")
-}
-```
-
-**Use plan-regression tests for:**
-- Critical SELECT queries whose plan shape must remain stable
-- Complex queries with multiple joins
-- INSERT/UPDATE/DELETE operations with complex WHERE clauses
-- Queries that depend on specific index usage
-- Catching unintentional plan changes in CI/CD
-
-### When should I use Golden testing vs Plan-Regression testing?
-
-They answer different questions, and pgxkit ships both.
-
-**Plan-Regression (`EnableAssertPlan` / `AssertPlan`)** asserts the *structural query plan* — the shape returned by `EXPLAIN (FORMAT JSON, COSTS OFF)`. It catches plan changes such as a seq-scan replacing an index-scan, a nested-loop turning into a hash-join, or a different join order. It does not look at result rows.
-
-**Golden transcripts (`EnableGolden` / `AssertGolden`)** assert the *behavior* of a scenario — the ordered sequence of `BEGIN`, every `Query`/`Exec` (with SQL, normalized args, and materialized rows), and the closing `COMMIT` or `ROLLBACK`. It catches an extra UPDATE, a missing INSERT, a different argument, a different returned row, or a `COMMIT` that became a `ROLLBACK`.
+Pick one per scenario — `EnableAssertPlan` and `EnableGolden` each return a fresh `*DB` and don't compose.
 
 ```go
-func TestCreateOrder(t *testing.T) {
-    testDB := pgxkit.RequireDB(t)
-
-    golden := testDB.EnableGolden("TestCreateOrder")
-    // ... run the code under test using golden as the DB ...
-    golden.AssertGolden(t, "TestCreateOrder")
-}
+golden := testDB.EnableGolden("TestCreateOrder")
+// ... run code under test ...
+golden.AssertGolden(t, "TestCreateOrder")
 ```
 
-Volatile values (timestamps, UUIDs, sequence-style IDs) are normalized to placeholders so transcripts compare cleanly across runs. Use `go test -overwrite-golden` to refresh the baseline after intentional behavior changes.
+Refresh either baseline with `go test -overwrite-plan` or `-overwrite-golden`.
 
-`EnableGolden` and `EnableAssertPlan` each return a fresh `*DB`, so they don't compose on a single instance — pick one per scenario depending on whether you need plan stability or behavioral stability.
-
-### How do I test error conditions?
-
-Test various error scenarios to ensure robust error handling:
+### How do I test for `pgx.ErrNoRows` / constraint violations?
 
 ```go
-func TestRepository_ErrorHandling(t *testing.T) {
-    suite := NewTestSuite(t)
-    repo := NewUserRepository(suite.DB)
-
-    t.Run("duplicate_email", func(t *testing.T) {
-        // Create user with duplicate email
-        user1 := &User{Email: "test@example.com"}
-        user2 := &User{Email: "test@example.com"}
-
-        err := repo.CreateUser(suite.ctx, user1)
-        require.NoError(t, err)
-
-        err = repo.CreateUser(suite.ctx, user2)
-        assert.Error(t, err)
-        assert.Contains(t, err.Error(), "duplicate")
-    })
-
-    t.Run("not_found", func(t *testing.T) {
-        _, err := repo.GetUser(suite.ctx, 999)
-        assert.Error(t, err)
-        assert.True(t, errors.Is(err, pgx.ErrNoRows))
-    })
-}
+_, err := repo.GetUser(ctx, 999)
+if !errors.Is(err, pgx.ErrNoRows) { /* fail */ }
 ```
 
-## Production Deployment
+For constraint violations, use `errors.As` with `*pgconn.PgError` and check `.Code` (e.g. `"23505"` for unique).
+
+## Production
 
 ### How do I implement graceful shutdown?
 
-Use pgxkit's built-in graceful shutdown:
+`db.Shutdown(ctx)` waits for active operations and runs `OnShutdown` hooks. Wire it to `SIGTERM`:
 
 ```go
-func main() {
-    db := pgxkit.NewDB()
-    err := db.Connect(ctx, "")
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // Setup graceful shutdown
-    c := make(chan os.Signal, 1)
-    signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-
-    go func() {
-        <-c
-        log.Println("Shutting down...")
-
-        // Give operations time to complete
-        ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-        defer cancel()
-
-        if err := db.Shutdown(ctx); err != nil {
-            log.Printf("Shutdown error: %v", err)
-        }
-
-        os.Exit(0)
-    }()
-
-    // Your application logic here
-}
+sig := make(chan os.Signal, 1)
+signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+<-sig
+ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+defer cancel()
+_ = db.Shutdown(ctx)
 ```
 
-### How do I handle database migrations?
+### How do I handle migrations?
 
-pgxkit doesn't include migration tools - use your preferred migration solution:
+pgxkit doesn't ship a migration tool. Use `golang-migrate`, `goose`, or whatever you already use. `pgxkit.GetDSN()` gives you the connection string.
 
-**With golang-migrate:**
-```go
-import "github.com/golang-migrate/migrate/v4"
+### How do I expose a health endpoint?
 
-func runMigrations() error {
-    m, err := migrate.New(
-        "file://migrations",
-        pgxkit.GetDSN())
-    if err != nil {
-        return err
-    }
-
-    return m.Up()
-}
-```
-
-**With custom migrations:**
-```go
-func applyMigrations(db *pgxkit.DB) error {
-    migrations := []string{
-        "CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT)",
-        "ALTER TABLE users ADD COLUMN email TEXT",
-    }
-
-    for _, migration := range migrations {
-        _, err := db.Exec(ctx, migration)
-        if err != nil {
-            return err
-        }
-    }
-    return nil
-}
-```
-
-### How do I set up health checks?
-
-Implement health check endpoints for monitoring:
-
-```go
-func healthCheckHandler(db *pgxkit.DB) http.HandlerFunc {
-    return func(w http.ResponseWriter, r *http.Request) {
-        ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-        defer cancel()
-
-        if err := db.HealthCheck(ctx); err != nil {
-            w.WriteHeader(http.StatusServiceUnavailable)
-            json.NewEncoder(w).Encode(map[string]string{
-                "status": "unhealthy",
-                "error":  err.Error(),
-            })
-            return
-        }
-
-        w.WriteHeader(http.StatusOK)
-        json.NewEncoder(w).Encode(map[string]string{
-            "status": "healthy",
-        })
-    }
-}
-```
+`db.HealthCheck(ctx)` pings the write pool. Wrap it in your HTTP handler — return `503` on error, `200` otherwise.
 
 ## Troubleshooting
 
-### Connection pool exhausted - what should I do?
+### Connection pool exhausted
 
-**Symptoms:**
-- High latency
-- Connection timeouts
-- "failed to get connection" errors
+Check `db.Stats().AcquiredConns()` vs `MaxConns()`. The two common causes:
 
-**Diagnosis:**
-```go
-stats := db.Stats()
-utilization := float64(stats.AcquiredConns()) / float64(stats.MaxConns())
-log.Printf("Pool utilization: %.2f%%", utilization*100)
+- Forgotten `rows.Close()` — every `Query` must be closed even on error.
+- Long-running queries — add `context.WithTimeout` to bound them.
 
-if utilization > 0.8 {
-    log.Println("Pool utilization is high")
-}
-```
+If you really need more capacity and the database can serve it, raise `pool_max_conns` in the DSN.
 
-**Solutions:**
-1. **Increase pool size** (if you have database capacity):
-```go
-dsn := fmt.Sprintf("%s?pool_max_conns=50", pgxkit.GetDSN())
-```
+### My queries are slow
 
-2. **Fix connection leaks** - ensure you're closing rows and statements:
-```go
-rows, err := db.Query(ctx, sql)
-if err != nil {
-    return err
-}
-defer rows.Close() // Always close rows!
-```
+Two complementary moves:
 
-3. **Optimize slow queries** - they hold connections longer
-4. **Implement connection timeouts**:
-```go
-ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-defer cancel()
-```
-
-### My queries are slow - how do I debug them?
-
-1. **Enable query logging:**
-```go
-db := pgxkit.NewDB()
-err := db.Connect(ctx, "",
-    pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
-        if duration := getDuration(ctx); duration > 100*time.Millisecond {
-            log.Printf("Slow query: %s (took %v)", sql, duration)
-        }
-        return nil
-    }),
-)
-```
-
-2. **Use EXPLAIN ANALYZE:**
-```go
-func analyzeQuery(db *pgxkit.DB, sql string, args ...interface{}) {
-    explainSQL := "EXPLAIN (ANALYZE, BUFFERS) " + sql
-    rows, err := db.Query(ctx, explainSQL, args...)
-    if err != nil {
-        log.Printf("Failed to explain query: %v", err)
-        return
-    }
-    defer rows.Close()
-
-    for rows.Next() {
-        var line string
-        rows.Scan(&line)
-        log.Println(line)
-    }
-}
-```
-
-3. **Check for missing indexes:**
-- Look for "Seq Scan" in query plans
-- Add indexes for frequently queried columns
-- Use partial indexes for filtered queries
+1. **Catch regressions in CI** with `EnableAssertPlan` / `AssertPlan`. Baselines live in `testdata/plans/<test>.json`; a plan flip (index-scan → seq-scan, hash-join → nested-loop) fails the test with a unified diff.
+2. **Investigate ad-hoc** with `EXPLAIN (ANALYZE, BUFFERS) <your query>` against the database directly — pgxkit doesn't wrap this; `psql` is the right tool.
 
 ### SSL connection issues
 
-**Common SSL problems and solutions:**
+Set `POSTGRES_SSLMODE` (`disable` / `prefer` / `require` / `verify-full`). For client certs, append `sslcert=`, `sslkey=`, `sslrootcert=` to the DSN.
 
-1. **SSL required but not configured:**
-```bash
-# Set SSL mode in environment
-export POSTGRES_SSLMODE=require
-```
+### High memory usage
 
-2. **Certificate verification issues:**
-```bash
-# For development (not production!)
-export POSTGRES_SSLMODE=prefer
-```
+Almost always one of: large unbounded result sets (add `LIMIT` or stream with `for rows.Next()`), connection leaks (forgotten `rows.Close()`), or pool sized too high. `db.Stats()` and PostgreSQL's `pg_stat_activity` will tell you which.
 
-3. **Custom certificates:**
-```go
-dsn := fmt.Sprintf(
-    "postgres://user:pass@host/db?sslmode=require&sslcert=%s&sslkey=%s&sslrootcert=%s",
-    certFile, keyFile, rootCertFile)
-```
+## Migrating from `database/sql`
 
-4. **Verify SSL is working:**
-```go
-var sslInUse bool
-err := db.QueryRow(ctx, "SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()").Scan(&sslInUse)
-if err != nil || !sslInUse {
-    log.Println("WARNING: SSL not in use")
-}
-```
-
-### Memory usage is high
-
-**Potential causes and solutions:**
-
-1. **Large result sets** - use LIMIT and pagination:
-```go
-rows, err := db.ReadQuery(ctx, "SELECT * FROM large_table ORDER BY id LIMIT 1000 OFFSET $1", offset)
-```
-
-2. **Connection leaks** - monitor pool statistics:
-```go
-go func() {
-    ticker := time.NewTicker(30 * time.Second)
-    for range ticker.C {
-        stats := db.Stats()
-        log.Printf("Active connections: %d/%d", stats.AcquiredConns(), stats.MaxConns())
-    }
-}()
-```
-
-3. **Result set streaming** for large datasets:
-```go
-func processLargeDataset(db *pgxkit.DB, processor func(*Record) error) error {
-    rows, err := db.ReadQuery(ctx, "SELECT * FROM large_table ORDER BY id")
-    if err != nil {
-        return err
-    }
-    defer rows.Close()
-
-    for rows.Next() {
-        var record Record
-        if err := rows.Scan(&record.ID, &record.Data); err != nil {
-            return err
-        }
-
-        // Process immediately, don't accumulate in memory
-        if err := processor(&record); err != nil {
-            return err
-        }
-    }
-    return rows.Err()
-}
-```
-
-## Migration and Integration
-
-### How do I migrate from database/sql?
-
-1. **Replace sql.DB with pgxkit.DB:**
 ```go
 // Before
-db, err := sql.Open("postgres", dsn)
+db, _ := sql.Open("postgres", dsn)
+rows, _ := db.Query("SELECT * FROM users")
 
-// After
+// After — pgxkit methods take a context
 db := pgxkit.NewDB()
-err := db.Connect(ctx, dsn)
+_ = db.Connect(ctx, dsn)
+rows, _ := db.Query(ctx, "SELECT * FROM users")
 ```
 
-2. **Update query methods:**
-```go
-// Before
-rows, err := db.Query("SELECT * FROM users")
-
-// After
-rows, err := db.Query(ctx, "SELECT * FROM users")
-```
-
-3. **Add context to all operations:**
-```go
-// All pgxkit methods require context
-ctx := context.Background()
-rows, err := db.Query(ctx, "SELECT * FROM users")
-```
-
-4. **Update scanning (pgx uses different types):**
-```go
-// May need to adjust for pgx types
-var id int64  // instead of int
-var name string
-err := rows.Scan(&id, &name)
-```
-
-### How do I integrate with existing code generation?
-
-**With sqlc:**
-```go
-// In your sqlc yaml config, use pgxkit
-gen:
-  go:
-    package: "myapp"
-    out: "db"
-    sql_package: "pgx/v5"
-
-// In your code
-db := pgxkit.NewDB()
-err := db.Connect(ctx, dsn)
-
-queries := myapp.New(db)  // sqlc generated code
-```
-
-**With existing repositories:**
-```go
-type UserRepository struct {
-    db *pgxkit.DB  // Replace your existing db field
-}
-
-func NewUserRepository(db *pgxkit.DB) *UserRepository {
-    return &UserRepository{db: db}
-}
-
-func (r *UserRepository) GetUser(ctx context.Context, id int) (*User, error) {
-    var user User
-    err := r.db.ReadQueryRow(ctx, "SELECT id, name FROM users WHERE id = $1", id).
-        Scan(&user.ID, &user.Name)
-    return &user, err
-}
-```
-
-### Can I use pgxkit with ORMs?
-
-pgxkit is designed to complement raw SQL approaches rather than ORMs. However, you can use it alongside ORMs:
-
-```go
-// Use pgxkit for performance-critical queries
-criticalData, err := pgxkitDB.ReadQuery(ctx, complexOptimizedQuery)
-
-// Use ORM for simpler operations
-user := User{Name: "John"}
-ormDB.Create(&user)
-```
-
-## Common Patterns
-
-### Request-scoped database operations
-
-```go
-func getUserHandler(db *pgxkit.DB) http.HandlerFunc {
-    return func(w http.ResponseWriter, r *http.Request) {
-        // Use request context for cancellation
-        ctx := r.Context()
-
-        userID, _ := strconv.Atoi(r.URL.Query().Get("id"))
-
-        var user User
-        err := db.ReadQueryRow(ctx, "SELECT id, name FROM users WHERE id = $1", userID).
-            Scan(&user.ID, &user.Name)
-        if err != nil {
-            http.Error(w, "User not found", http.StatusNotFound)
-            return
-        }
-
-        json.NewEncoder(w).Encode(user)
-    }
-}
-```
-
-### Background job processing
-
-```go
-func processJobs(db *pgxkit.DB) {
-    ticker := time.NewTicker(10 * time.Second)
-    defer ticker.Stop()
-
-    for range ticker.C {
-        ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-
-        rows, err := db.Query(ctx, "SELECT id, data FROM jobs WHERE status = 'pending' LIMIT 10")
-        if err != nil {
-            log.Printf("Failed to fetch jobs: %v", err)
-            cancel()
-            continue
-        }
-
-        for rows.Next() {
-            var job Job
-            if err := rows.Scan(&job.ID, &job.Data); err != nil {
-                log.Printf("Failed to scan job: %v", err)
-                continue
-            }
-
-            go processJob(db, job)  // Process asynchronously
-        }
-
-        rows.Close()
-        cancel()
-    }
-}
-```
-
-## See Also
-
-- **[Getting Started](Getting-Started)** - Basic setup and usage
-- **[Examples](Examples)** - Practical code examples
-- **[Performance Guide](Performance-Guide)** - Optimization strategies
-- **[Production Guide](Production-Guide)** - Deployment best practices
-- **[Testing Guide](Testing-Guide)** - Testing strategies
-- **[API Reference](API-Reference)** - Complete API documentation
-- **[Contributing](Contributing)** - How to contribute
+pgx has stricter type handling than `database/sql`; expect to scan into `int64` instead of `int` and use `pgtype` for nullable columns. The [pgx wiki](https://github.com/jackc/pgx/wiki) covers the differences.
 
 ---
 
 **[← Back to Home](Home)**
-
-*If you have a question that's not covered here, please [open an issue](https://github.com/nhalm/pgxkit/issues) or start a [discussion](https://github.com/nhalm/pgxkit/discussions).*
-

@@ -1,48 +1,18 @@
-# Getting Started with pgxkit
+# Getting Started
 
 **[← Back to Home](Home)**
 
-Get up and running with pgxkit in under 5 minutes.
-
-## Table of Contents
-- [Prerequisites](#prerequisites)
-- [Step 1: Install pgxkit](#step-1-install-pgxkit)
-- [Step 2: Set Environment Variables](#step-2-set-environment-variables)
-- [Step 3: Create Your First App](#step-3-create-your-first-app)
-- [Step 4: Run Your App](#step-4-run-your-app)
-- [Step 5: Add Production Features](#step-5-add-production-features)
-- [What's Next?](#whats-next)
-- [Troubleshooting](#troubleshooting)
-
-## Prerequisites
-
-- Go 1.21 or later
-- PostgreSQL 12 or later
-- Basic familiarity with Go and PostgreSQL
-
-## Step 1: Install pgxkit
+## Install
 
 ```bash
-go mod init your-app
-go get github.com/nhalm/pgxkit
+go get github.com/nhalm/pgxkit/v2
 ```
 
-## Step 2: Set Environment Variables
+Requires Go 1.25+ and PostgreSQL 12+.
 
-Set these environment variables (or use a `.env` file):
+## Connect
 
-```bash
-export POSTGRES_HOST=localhost
-export POSTGRES_PORT=5432
-export POSTGRES_USER=postgres
-export POSTGRES_PASSWORD=yourpassword
-export POSTGRES_DB=yourdb
-export POSTGRES_SSLMODE=disable
-```
-
-## Step 3: Create Your First App
-
-Create `main.go`:
+`Connect` accepts a DSN. If empty, it builds one from `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_SSLMODE`.
 
 ```go
 package main
@@ -51,183 +21,68 @@ import (
     "context"
     "log"
 
-    "github.com/nhalm/pgxkit"
+    "github.com/nhalm/pgxkit/v2"
 )
 
 func main() {
     ctx := context.Background()
-
-    // Create and connect to database
     db := pgxkit.NewDB()
-    err := db.Connect(ctx, "") // Uses environment variables
-    if err != nil {
-        log.Fatal("Failed to connect:", err)
+    if err := db.Connect(ctx, ""); err != nil {
+        log.Fatal(err)
     }
     defer db.Shutdown(ctx)
 
-    // Test the connection
     if err := db.HealthCheck(ctx); err != nil {
-        log.Fatal("Database health check failed:", err)
+        log.Fatal(err)
     }
 
-    log.Println("Connected to PostgreSQL!")
-
-    // Create a simple table
-    _, err = db.Exec(ctx, `
-        CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
-            email TEXT UNIQUE NOT NULL,
-            created_at TIMESTAMP DEFAULT NOW()
-        )
-    `)
-    if err != nil {
-        log.Fatal("Failed to create table:", err)
+    var n int
+    if err := db.QueryRow(ctx, "SELECT 1").Scan(&n); err != nil {
+        log.Fatal(err)
     }
-
-    // Insert a user
-    _, err = db.Exec(ctx,
-        "INSERT INTO users (name, email) VALUES ($1, $2)",
-        "John Doe", "john@example.com")
-    if err != nil {
-        log.Fatal("Failed to insert user:", err)
-    }
-
-    // Query users
-    rows, err := db.Query(ctx, "SELECT id, name, email FROM users")
-    if err != nil {
-        log.Fatal("Failed to query users:", err)
-    }
-    defer rows.Close()
-
-    log.Println("Users:")
-    for rows.Next() {
-        var id int
-        var name, email string
-        if err := rows.Scan(&id, &name, &email); err != nil {
-            log.Fatal("Failed to scan row:", err)
-        }
-        log.Printf("  %d: %s (%s)", id, name, email)
-    }
-
-    log.Println("Success! pgxkit is working.")
+    log.Println("ok:", n)
 }
 ```
 
-## Step 4: Run Your App
+`db.Query`, `db.QueryRow`, `db.Exec` go through the write pool. `db.ReadQuery` and `db.ReadQueryRow` go through the read pool when you've configured one via `ConnectReadWrite`; otherwise they share the single pool.
 
-```bash
-go run main.go
-```
-
-You should see:
-```
-Connected to PostgreSQL!
-Users:
-  1: John Doe (john@example.com)
-Success! pgxkit is working.
-```
-
-## Step 5: Add Production Features
-
-### Add Logging Hook
+## Read/write split
 
 ```go
-// Configure hooks when connecting
-db := pgxkit.NewDB()
-err := db.Connect(ctx, "",
-    pgxkit.WithBeforeOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
-        log.Printf("Executing: %s", sql)
+err := db.ConnectReadWrite(ctx,
+    "postgres://user:pass@replica/db",
+    "postgres://user:pass@primary/db")
+```
+
+## Hooks
+
+Every operation passes through configurable hooks. `AfterOperation` receives the `pgconn.CommandTag` from Exec.
+
+```go
+db.Connect(ctx, "",
+    pgxkit.WithBeforeOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, err error) error {
+        log.Printf("query: %s", sql)
         return nil
     }),
 )
 ```
 
-### Add Read/Write Splitting
+See [Examples](Examples#hook-system) for metrics, slog, and transaction-outcome patterns.
+
+## Retry
 
 ```go
-// Instead of db.Connect(), use:
-err := db.ConnectReadWrite(ctx,
-    "postgres://user:pass@read-replica/db",   // Read pool
-    "postgres://user:pass@primary/db")       // Write pool
-
-// Use read pool for queries
-rows, err := db.ReadQuery(ctx, "SELECT * FROM users")
-```
-
-### Add Retry Logic
-
-```go
-// Retry with defaults (3 attempts, 100ms base delay, 1s max delay, 2x backoff)
 err := pgxkit.RetryOperation(ctx, func(ctx context.Context) error {
-    _, err := db.Exec(ctx,
-        "INSERT INTO users (name, email) VALUES ($1, $2)",
-        "Jane Doe", "jane@example.com")
+    _, err := db.Exec(ctx, "INSERT INTO users (name) VALUES ($1)", "Jane")
     return err
 })
-
-// Or with custom retry configuration
-err = pgxkit.RetryOperation(ctx, func(ctx context.Context) error {
-    _, err := db.Exec(ctx, "INSERT INTO users ...")
-    return err
-}, pgxkit.WithMaxRetries(5), pgxkit.WithBaseDelay(200*time.Millisecond))
 ```
 
-## What's Next?
+`RetryOperation` retries on transient PostgreSQL errors (serialization failures, deadlocks, connection issues). Tune via `WithMaxRetries`, `WithBaseDelay`, etc.
 
-**Production Ready**: Your app now has:
-- Connection pooling
-- Health checks
-- Graceful shutdown
-- Hook system for observability
+## Next
 
-**Learn More**:
-- **[Examples](Examples)** - Comprehensive usage examples
-- **[Performance Guide](Performance-Guide)** - Optimization strategies
-- **[Production Guide](Production-Guide)** - Deployment best practices
-- **[Testing Guide](Testing-Guide)** - Plan-regression test support
-
-**Common Patterns**:
-- **[API Reference](API-Reference)** - Complete API documentation
-- **[FAQ](FAQ)** - Common questions and solutions
-
-## Troubleshooting
-
-### Connection Issues
-```bash
-# Test your connection string
-psql "postgres://user:pass@host:port/db"
-```
-
-### Environment Variables
-```bash
-# Check your environment
-env | grep POSTGRES_
-```
-
-### Health Check
-```go
-if err := db.HealthCheck(ctx); err != nil {
-    log.Printf("Health check failed: %v", err)
-}
-```
-
-### Common Solutions
-
-| Issue | Solution |
-|-------|----------|
-| Connection timeout | Check firewall and network connectivity |
-| Authentication failed | Verify username/password and database permissions |
-| Database not found | Ensure database exists and name is correct |
-| SSL errors | Check `POSTGRES_SSLMODE` setting |
-
-## See Also
-
-- **[Examples](Examples)** - More comprehensive examples
-- **[Performance Guide](Performance-Guide)** - Optimize your application
-- **[Production Guide](Production-Guide)** - Deploy to production
-- **[Contributing](Contributing)** - Help improve pgxkit
-
----
-
-**[← Back to Home](Home)**
+- [Examples](Examples) — hooks, retry, testing, type helpers
+- [Testing Guide](Testing-Guide) — `EnableAssertPlan`, `EnableGolden`, `RequireDB`
+- [API Reference](API-Reference)
+- [FAQ](FAQ)

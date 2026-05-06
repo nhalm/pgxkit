@@ -446,25 +446,7 @@ const (
 )
 ```
 
-These constants are passed as the `sql` parameter to `AfterTransaction` hooks, allowing you to distinguish between commit and rollback operations.
-
-| Constant | Value | Description |
-|----------|-------|-------------|
-| `TxCommit` | `"TX:COMMIT"` | Passed when a transaction is committed |
-| `TxRollback` | `"TX:ROLLBACK"` | Passed when a transaction is rolled back |
-
-**Example:**
-```go
-pgxkit.WithAfterTransaction(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
-    switch sql {
-    case pgxkit.TxCommit:
-        log.Println("Transaction committed")
-    case pgxkit.TxRollback:
-        log.Println("Transaction rolled back")
-    }
-    return nil
-})
-```
+Passed as the `sql` parameter to `AfterTransaction` hooks so handlers can tell commits from rollbacks.
 
 ## Hook System
 
@@ -870,7 +852,7 @@ Compares the in-memory plans captured by `EnableAssertPlan` against `testdata/pl
 func (tdb *TestDB) EnableGolden(testName string, opts ...GoldenOption) *DB
 ```
 
-Enables golden transcript testing. Records every database event (BEGIN, QUERY, COMMIT, ROLLBACK) the scenario produces, along with the SQL, normalized args, and materialized result rows. Call `AssertGolden` after the scenario to compare the transcript against `testdata/golden/<testName>.json`. Volatile values (`time.Time`, UUIDs, integer columns named `id` or `*_id`) are normalized to stable placeholders so transcripts compare cleanly across runs.
+Enables golden transcript testing. Records every database event (BEGIN, QUERY, COMMIT, ROLLBACK) the scenario produces, along with the SQL, normalized args, and `rows_affected` for Exec calls. Call `AssertGolden` to compare the transcript against `testdata/golden/<testName>.json`. Volatile arg values (`time.Time`, UUIDs) are normalized to stable placeholders so transcripts compare cleanly across runs.
 
 **Example:**
 ```go
@@ -893,7 +875,7 @@ Use `go test -overwrite-golden` to regenerate baselines after intentional behavi
 ### GoldenOption / WithGoldenNormalizer
 
 ```go
-type GoldenOption func(*transcriptRecorder)
+type GoldenOption func(*assertGoldenHook)
 
 func WithGoldenNormalizer(fn func(any) (any, bool)) GoldenOption
 ```
@@ -926,33 +908,15 @@ dsn := pgxkit.GetDSN()
 
 ## Error Handling
 
-pgxkit provides PostgreSQL-aware error handling and categorization:
-
-- **Connection errors** - Detected and handled by retry logic
-- **Constraint violations** - Preserved and wrapped for application handling
-- **Timeout errors** - Detected and can trigger circuit breaker logic
-- **Serialization failures** - Automatically retried when using retry logic
+`RetryOperation` and `Retry[T]` classify and retry transient PostgreSQL errors (connection drops, serialization failures, deadlocks). Constraint violations and other deterministic errors are returned to the caller unchanged.
 
 ## Thread Safety
 
-All `DB` methods are thread-safe and can be called concurrently from multiple goroutines. The underlying connection pools handle concurrent access safely.
-
-## Best Practices
-
-1. **Use Read methods for optimization** - `ReadQuery()` and `ReadQueryRow()` when you have read/write splits
-2. **Configure via options** - Pass all configuration (pool settings, hooks) as options to `Connect()`
-3. **Handle context cancellation** - All methods respect context cancellation
-4. **Use transactions for consistency** - Group related operations in transactions
-5. **Monitor pool statistics** - Use `Stats()` and `ReadStats()` for monitoring
-6. **Implement graceful shutdown** - Use `Shutdown()` with appropriate timeout
+All `DB` methods are safe for concurrent use. `*Tx` is not — use one transaction per goroutine.
 
 ## See Also
 
-- **[Getting Started](Getting-Started)** - Basic setup and configuration
-- **[Examples](Examples)** - Practical code examples
-- **[Performance Guide](Performance-Guide)** - Optimization strategies
-- **[Production Guide](Production-Guide)** - Deployment best practices
-- **[Testing Guide](Testing-Guide)** - Testing strategies
+- [Getting Started](Getting-Started) · [Examples](Examples) · [Testing Guide](Testing-Guide)
 
 ---
 
