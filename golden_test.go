@@ -581,6 +581,78 @@ func TestGolden_QueryRowReturnsErrNoRowsOnEmpty(t *testing.T) {
 	g.AssertGolden(t, name)
 }
 
+// TestGolden_ScansUUIDColumn is a regression test for issue #77: replay rows
+// must scan a uuid column into *uuid.UUID without the "unable to scan type
+// [16]uint8 into UUID" error. The bare gen_random_uuid() form mirrors the
+// minimal repro from the issue.
+func TestGolden_ScansUUIDColumn(t *testing.T) {
+	testDB := RequireDB(t)
+	if testDB == nil {
+		return
+	}
+	const name = "TestGolden_ScansUUIDColumn"
+	defer cleanupGolden(name)
+	_ = cleanupGolden(name)
+
+	ctx := context.Background()
+	g := testDB.EnableGolden(name)
+
+	var id uuid.UUID
+	if err := g.QueryRow(ctx, "SELECT gen_random_uuid()").Scan(&id); err != nil {
+		t.Fatalf("scan UUID: %v", err)
+	}
+	if id == uuid.Nil {
+		t.Errorf("expected non-zero UUID")
+	}
+	g.AssertGolden(t, name)
+}
+
+// TestGolden_InsertReturningUUIDScansViaReplay covers the consumer shape from
+// issue #77: generated CRUD does INSERT … RETURNING id, … and scans the row
+// into a struct containing uuid.UUID + scalar fields.
+func TestGolden_InsertReturningUUIDScansViaReplay(t *testing.T) {
+	testDB := RequireDB(t)
+	if testDB == nil {
+		return
+	}
+	ctx := context.Background()
+	const table = "golden_uuid_returning"
+	if _, err := testDB.Exec(ctx, "CREATE TABLE IF NOT EXISTS "+table+
+		" (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())"); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testDB.Exec(context.Background(), "DROP TABLE IF EXISTS "+table)
+	})
+	if _, err := testDB.Exec(ctx, "TRUNCATE "+table); err != nil {
+		t.Fatalf("truncate: %v", err)
+	}
+
+	const name = "TestGolden_InsertReturningUUID"
+	defer cleanupGolden(name)
+	_ = cleanupGolden(name)
+
+	g := testDB.EnableGolden(name)
+	var id uuid.UUID
+	var n string
+	var created time.Time
+	if err := g.QueryRow(ctx,
+		"INSERT INTO "+table+" (name) VALUES ($1) RETURNING id, name, created_at", "alpha",
+	).Scan(&id, &n, &created); err != nil {
+		t.Fatalf("insert returning: %v", err)
+	}
+	if id == uuid.Nil {
+		t.Errorf("expected non-zero UUID")
+	}
+	if n != "alpha" {
+		t.Errorf("name = %q, want alpha", n)
+	}
+	if created.IsZero() {
+		t.Errorf("expected non-zero created_at")
+	}
+	g.AssertGolden(t, name)
+}
+
 // capturingT mimics enough of *testing.T for assertGolden to drive into
 // without polluting the real test result.
 type capturingT struct {
