@@ -636,10 +636,6 @@ golden := testDB.EnableGolden("TestCreateOrder",
 
 Return `(replacement, true)` to take over normalization for the value, or `(nil, false)` to fall through to the next custom normalizer or to the defaults.
 
-### Limitations
-
-- Concurrent fan-out within a single scenario is out of scope — captured order would be non-deterministic.
-
 ## Testing Patterns
 
 ### Table-Driven Tests
