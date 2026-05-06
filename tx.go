@@ -17,7 +17,6 @@ const (
 
 var ErrTxFinalized = errors.New("transaction already finalized")
 
-// finalizedRow implements pgx.Row for queries on finalized transactions.
 type finalizedRow struct{}
 
 func (f *finalizedRow) Scan(dest ...any) error {
@@ -27,67 +26,71 @@ func (f *finalizedRow) Scan(dest ...any) error {
 var _ Executor = (*Tx)(nil)
 
 // Tx wraps a pgx.Tx to implement the Executor interface and provide
-// transaction lifecycle management integrated with pgxkit's activeOps tracking.
+// transaction lifecycle management integrated with pgxkit's activeOps tracking
+// and hook system.
 type Tx struct {
 	tx        pgx.Tx
 	db        *DB
-	recorder  *transcriptRecorder
 	finalized atomic.Bool
 }
 
-// Query executes a query within the transaction.
-// Unlike DB.Query, this does not fire BeforeOperation/AfterOperation hooks.
+// Query executes a query within the transaction. Fires BeforeOperation /
+// AfterOperation hooks on the parent DB.
 func (t *Tx) Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error) {
 	if t.finalized.Load() {
 		return nil, ErrTxFinalized
 	}
+	if err := t.db.hooks.executeBeforeOperation(ctx, sql, args, pgconn.CommandTag{}, nil); err != nil {
+		return nil, fmt.Errorf("before operation hook failed: %w", err)
+	}
 	rows, err := t.tx.Query(ctx, sql, args...)
-	if err != nil {
-		return nil, err
+	if hookErr := t.db.hooks.executeAfterOperation(ctx, sql, args, pgconn.CommandTag{}, err); hookErr != nil {
+		if rows != nil {
+			rows.Close()
+		}
+		if err == nil {
+			return nil, fmt.Errorf("after operation hook failed: %w", hookErr)
+		}
 	}
-	if t.recorder != nil {
-		return captureRowsForGolden(rows, t.recorder, sql, args)
-	}
-	return rows, nil
+	return rows, err
 }
 
 // QueryRow executes a query that returns a single row within the transaction.
-// Unlike DB.QueryRow, this does not fire BeforeOperation/AfterOperation hooks.
+// Fires BeforeOperation / AfterOperation hooks on the parent DB.
 func (t *Tx) QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row {
 	if t.finalized.Load() {
 		return &finalizedRow{}
 	}
-	if t.recorder != nil {
-		rows, err := t.tx.Query(ctx, sql, args...)
-		if err != nil {
-			return &shutdownRow{err: err}
-		}
-		replay, recordErr := captureRowsForGolden(rows, t.recorder, sql, args)
-		if recordErr != nil {
-			return &shutdownRow{err: recordErr}
-		}
-		return &replayRow{rows: replay}
+	if err := t.db.hooks.executeBeforeOperation(ctx, sql, args, pgconn.CommandTag{}, nil); err != nil {
+		return &shutdownRow{err: fmt.Errorf("before operation hook failed: %w", err)}
 	}
-	return t.tx.QueryRow(ctx, sql, args...)
+	row := t.tx.QueryRow(ctx, sql, args...)
+	if hookErr := t.db.hooks.executeAfterOperation(ctx, sql, args, pgconn.CommandTag{}, nil); hookErr != nil {
+		return &shutdownRow{err: fmt.Errorf("after operation hook failed: %w", hookErr)}
+	}
+	return row
 }
 
-// Exec executes a statement within the transaction.
-// Unlike DB.Exec, this does not fire BeforeOperation/AfterOperation hooks.
+// Exec executes a statement within the transaction. Fires BeforeOperation /
+// AfterOperation hooks on the parent DB; AfterOperation receives the command tag.
 func (t *Tx) Exec(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error) {
 	if t.finalized.Load() {
 		return pgconn.CommandTag{}, ErrTxFinalized
 	}
+	if err := t.db.hooks.executeBeforeOperation(ctx, sql, args, pgconn.CommandTag{}, nil); err != nil {
+		return pgconn.CommandTag{}, fmt.Errorf("before operation hook failed: %w", err)
+	}
 	tag, err := t.tx.Exec(ctx, sql, args...)
-	if err == nil && t.recorder != nil {
-		t.recorder.recordExec(sql, args, tag.RowsAffected())
+	if hookErr := t.db.hooks.executeAfterOperation(ctx, sql, args, tag, err); hookErr != nil {
+		if err == nil {
+			return tag, fmt.Errorf("after operation hook failed: %w", hookErr)
+		}
 	}
 	return tag, err
 }
 
-// Commit commits the transaction.
-// It fires the AfterTransaction hook and uses atomic finalization to ensure
-// activeOps.Done() is called exactly once, making it safe for the
-// "defer Rollback() + explicit Commit()" pattern.
+// Commit commits the transaction and fires AfterTransaction. Atomic
+// finalization makes "defer Rollback() + explicit Commit()" safe.
 func (t *Tx) Commit(ctx context.Context) error {
 	if !t.finalized.CompareAndSwap(false, true) {
 		return nil
@@ -95,10 +98,7 @@ func (t *Tx) Commit(ctx context.Context) error {
 	defer t.db.activeOps.Done()
 
 	err := t.tx.Commit(ctx)
-	if t.recorder != nil {
-		t.recorder.recordCommit(err)
-	}
-	hookErr := t.db.hooks.executeAfterTransaction(ctx, TxCommit, nil, err)
+	hookErr := t.db.hooks.executeAfterTransaction(ctx, TxCommit, nil, pgconn.CommandTag{}, err)
 	if hookErr != nil {
 		if err != nil {
 			return errors.Join(err, fmt.Errorf("after commit hook failed: %w", hookErr))
@@ -108,10 +108,8 @@ func (t *Tx) Commit(ctx context.Context) error {
 	return err
 }
 
-// Rollback rolls back the transaction.
-// It fires the AfterTransaction hook and uses atomic finalization to ensure
-// activeOps.Done() is called exactly once, making it safe for the
-// "defer Rollback() + explicit Commit()" pattern.
+// Rollback rolls back the transaction and fires AfterTransaction. Atomic
+// finalization makes "defer Rollback() + explicit Commit()" safe.
 func (t *Tx) Rollback(ctx context.Context) error {
 	if !t.finalized.CompareAndSwap(false, true) {
 		return nil
@@ -119,10 +117,7 @@ func (t *Tx) Rollback(ctx context.Context) error {
 	defer t.db.activeOps.Done()
 
 	err := t.tx.Rollback(ctx)
-	if t.recorder != nil {
-		t.recorder.recordRollback(err)
-	}
-	hookErr := t.db.hooks.executeAfterTransaction(ctx, TxRollback, nil, err)
+	hookErr := t.db.hooks.executeAfterTransaction(ctx, TxRollback, nil, pgconn.CommandTag{}, err)
 	if hookErr != nil {
 		if err != nil {
 			return errors.Join(err, fmt.Errorf("after rollback hook failed: %w", hookErr))
@@ -132,8 +127,8 @@ func (t *Tx) Rollback(ctx context.Context) error {
 	return err
 }
 
-// Tx returns the underlying pgx.Tx for advanced use cases
-// that require direct access to pgx transaction functionality.
+// Tx returns the underlying pgx.Tx for advanced use cases that require direct
+// access to pgx transaction functionality.
 func (t *Tx) Tx() pgx.Tx {
 	return t.tx
 }

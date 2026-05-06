@@ -266,11 +266,11 @@ func setupLogging() *pgxkit.DB {
     db := pgxkit.NewDB()
 
     err := db.Connect(ctx, "",
-        pgxkit.WithBeforeOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        pgxkit.WithBeforeOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
             log.Printf("Executing: %s", sql)
             return nil
         }),
-        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
             if operationErr != nil {
                 log.Printf("Query failed: %v", operationErr)
             } else {
@@ -295,7 +295,7 @@ func setupMetrics() *pgxkit.DB {
     db := pgxkit.NewDB()
 
     err := db.Connect(ctx, "",
-        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
             operation := extractOperation(sql) // Parse SELECT, INSERT, etc.
 
             // Record query count
@@ -324,7 +324,7 @@ func setupTransactionMetrics() *pgxkit.DB {
     db := pgxkit.NewDB()
 
     err := db.Connect(ctx, "",
-        pgxkit.WithAfterTransaction(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        pgxkit.WithAfterTransaction(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
             // The sql parameter indicates transaction outcome
             switch sql {
             case pgxkit.TxCommit:
@@ -681,7 +681,7 @@ func setupPrometheusMetrics() *pgxkit.DB {
     db := pgxkit.NewDB()
 
     err := db.Connect(ctx, "",
-        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
             if start, ok := ctx.Value("metrics_start").(time.Time); ok {
                 duration := time.Since(start)
                 operation := extractOperation(sql)
@@ -714,7 +714,7 @@ func setupStructuredLogging() *pgxkit.DB {
     db := pgxkit.NewDB()
 
     err := db.Connect(ctx, "",
-        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
             if operationErr != nil {
                 logger.ErrorContext(ctx, "database query failed",
                     slog.String("sql", sql),

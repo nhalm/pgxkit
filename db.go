@@ -173,14 +173,14 @@ func GetDSN() string {
 //   - Built-in retry logic for transient failures
 //   - Health checks and connection statistics
 type DB struct {
-	readPool  *pgxpool.Pool
-	writePool *pgxpool.Pool
-	hooks     *hooks
-	recorder  *transcriptRecorder
-	planHook  *assertPlanHook
-	mu        sync.RWMutex
-	shutdown  bool
-	activeOps sync.WaitGroup
+	readPool   *pgxpool.Pool
+	writePool  *pgxpool.Pool
+	hooks      *hooks
+	planHook   *assertPlanHook
+	goldenHook *assertGoldenHook
+	mu         sync.RWMutex
+	shutdown   bool
+	activeOps  sync.WaitGroup
 }
 
 // ConnectOption configures a database connection.
@@ -606,24 +606,20 @@ func (db *DB) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (*Tx, error)
 	}
 	db.mu.RUnlock()
 
-	if err := db.hooks.executeBeforeTransaction(ctx, "", nil, nil); err != nil {
+	if err := db.hooks.executeBeforeTransaction(ctx, "", nil, pgconn.CommandTag{}, nil); err != nil {
 		return nil, fmt.Errorf("before transaction hook failed: %w", err)
 	}
 
 	pgxTx, err := db.writePool.BeginTx(ctx, txOptions)
 	if err != nil {
-		if hookErr := db.hooks.executeAfterTransaction(ctx, "", nil, err); hookErr != nil {
+		if hookErr := db.hooks.executeAfterTransaction(ctx, "", nil, pgconn.CommandTag{}, err); hookErr != nil {
 			return nil, errors.Join(err, fmt.Errorf("after transaction hook failed: %w", hookErr))
 		}
 		return nil, err
 	}
 
-	if db.recorder != nil {
-		db.recorder.recordBegin()
-	}
-
 	db.activeOps.Add(1)
-	return &Tx{tx: pgxTx, db: db, recorder: db.recorder}, nil
+	return &Tx{tx: pgxTx, db: db}, nil
 }
 
 // Shutdown gracefully shuts down the database connections.
@@ -661,7 +657,7 @@ func (db *DB) Shutdown(ctx context.Context) error {
 	case <-ctx.Done():
 	}
 
-	if err := db.hooks.executeOnShutdown(ctx, "", nil, nil); err != nil {
+	if err := db.hooks.executeOnShutdown(ctx, "", nil, pgconn.CommandTag{}, nil); err != nil {
 		return fmt.Errorf("shutdown hook failed: %w", err)
 	}
 
@@ -781,27 +777,19 @@ func (db *DB) executeQuery(ctx context.Context, pool *pgxpool.Pool, sql string, 
 	db.activeOps.Add(1)
 	defer db.activeOps.Done()
 
-	if err := db.hooks.executeBeforeOperation(ctx, sql, args, nil); err != nil {
+	if err := db.hooks.executeBeforeOperation(ctx, sql, args, pgconn.CommandTag{}, nil); err != nil {
 		return nil, fmt.Errorf("before operation hook failed: %w", err)
 	}
 
 	rows, err := pool.Query(ctx, sql, args...)
 
-	if hookErr := db.hooks.executeAfterOperation(ctx, sql, args, err); hookErr != nil {
+	if hookErr := db.hooks.executeAfterOperation(ctx, sql, args, pgconn.CommandTag{}, err); hookErr != nil {
 		if rows != nil {
 			rows.Close()
 		}
 		if err == nil {
 			return nil, fmt.Errorf("after operation hook failed: %w", hookErr)
 		}
-	}
-
-	if err == nil && db.recorder != nil && rows != nil {
-		replay, recordErr := captureRowsForGolden(rows, db.recorder, sql, args)
-		if recordErr != nil {
-			return nil, recordErr
-		}
-		return replay, nil
 	}
 
 	return rows, err
@@ -822,31 +810,13 @@ func (db *DB) executeQueryRow(ctx context.Context, pool *pgxpool.Pool, sql strin
 	db.activeOps.Add(1)
 	defer db.activeOps.Done()
 
-	if err := db.hooks.executeBeforeOperation(ctx, sql, args, nil); err != nil {
+	if err := db.hooks.executeBeforeOperation(ctx, sql, args, pgconn.CommandTag{}, nil); err != nil {
 		return &shutdownRow{err: fmt.Errorf("before operation hook failed: %w", err)}
-	}
-
-	if db.recorder != nil {
-		rows, qerr := pool.Query(ctx, sql, args...)
-		if hookErr := db.hooks.executeAfterOperation(ctx, sql, args, qerr); hookErr != nil {
-			if rows != nil {
-				rows.Close()
-			}
-			return &shutdownRow{err: fmt.Errorf("after operation hook failed: %w", hookErr)}
-		}
-		if qerr != nil {
-			return &shutdownRow{err: qerr}
-		}
-		replay, recordErr := captureRowsForGolden(rows, db.recorder, sql, args)
-		if recordErr != nil {
-			return &shutdownRow{err: recordErr}
-		}
-		return &replayRow{rows: replay}
 	}
 
 	row := pool.QueryRow(ctx, sql, args...)
 
-	if hookErr := db.hooks.executeAfterOperation(ctx, sql, args, nil); hookErr != nil {
+	if hookErr := db.hooks.executeAfterOperation(ctx, sql, args, pgconn.CommandTag{}, nil); hookErr != nil {
 		return &shutdownRow{err: fmt.Errorf("after operation hook failed: %w", hookErr)}
 	}
 
@@ -868,20 +838,16 @@ func (db *DB) executeExec(ctx context.Context, pool *pgxpool.Pool, sql string, a
 	db.activeOps.Add(1)
 	defer db.activeOps.Done()
 
-	if err := db.hooks.executeBeforeOperation(ctx, sql, args, nil); err != nil {
+	if err := db.hooks.executeBeforeOperation(ctx, sql, args, pgconn.CommandTag{}, nil); err != nil {
 		return pgconn.CommandTag{}, fmt.Errorf("before operation hook failed: %w", err)
 	}
 
 	tag, err := pool.Exec(ctx, sql, args...)
 
-	if hookErr := db.hooks.executeAfterOperation(ctx, sql, args, err); hookErr != nil {
+	if hookErr := db.hooks.executeAfterOperation(ctx, sql, args, tag, err); hookErr != nil {
 		if err == nil {
 			return tag, fmt.Errorf("after operation hook failed: %w", hookErr)
 		}
-	}
-
-	if err == nil && db.recorder != nil {
-		db.recorder.recordExec(sql, args, tag.RowsAffected())
 	}
 
 	return tag, err

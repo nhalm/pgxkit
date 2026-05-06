@@ -278,7 +278,7 @@ func TestTxCommitHookExecution(t *testing.T) {
 
 	hookCalled := false
 	var hookErr error
-	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 		hookCalled = true
 		hookErr = operationErr
 		return nil
@@ -314,7 +314,7 @@ func TestTxCommitHookReceivesError(t *testing.T) {
 
 	hookCalled := false
 	var hookErr error
-	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 		hookCalled = true
 		hookErr = operationErr
 		return nil
@@ -418,7 +418,7 @@ func TestTxRollbackHookExecution(t *testing.T) {
 
 	hookCalled := false
 	var hookErr error
-	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 		hookCalled = true
 		hookErr = operationErr
 		return nil
@@ -454,7 +454,7 @@ func TestTxRollbackHookReceivesError(t *testing.T) {
 
 	hookCalled := false
 	var hookErr error
-	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 		hookCalled = true
 		hookErr = operationErr
 		return nil
@@ -551,7 +551,7 @@ func TestTxCommitHookErrorPropagation(t *testing.T) {
 	db := NewDB()
 	hookErr := errors.New("hook failed")
 
-	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 		return hookErr
 	})
 
@@ -576,7 +576,7 @@ func TestTxRollbackHookErrorPropagation(t *testing.T) {
 	db := NewDB()
 	hookErr := errors.New("hook failed")
 
-	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 		return hookErr
 	})
 
@@ -601,7 +601,7 @@ func TestTxCommitHookReceivesOperationType(t *testing.T) {
 	db := NewDB()
 
 	var capturedSQL string
-	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 		capturedSQL = sql
 		return nil
 	})
@@ -627,7 +627,7 @@ func TestTxRollbackHookReceivesOperationType(t *testing.T) {
 	db := NewDB()
 
 	var capturedSQL string
-	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 		capturedSQL = sql
 		return nil
 	})
@@ -654,7 +654,7 @@ func TestTxCommitBothOperationAndHookError(t *testing.T) {
 	commitErr := errors.New("commit failed")
 	hookErr := errors.New("hook failed")
 
-	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 		return hookErr
 	})
 
@@ -683,7 +683,7 @@ func TestTxRollbackBothOperationAndHookError(t *testing.T) {
 	rollbackErr := errors.New("rollback failed")
 	hookErr := errors.New("hook failed")
 
-	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 		return hookErr
 	})
 

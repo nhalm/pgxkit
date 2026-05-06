@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestRequireTestPool(t *testing.T) {
@@ -371,7 +372,7 @@ func TestBeforeTransactionHookFailure(t *testing.T) {
 	db.readPool = pool
 	db.writePool = pool
 	db.hooks = newHooks()
-	db.hooks.addHook(BeforeTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+	db.hooks.addHook(BeforeTransaction, func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 		return hookErr
 	})
 
@@ -395,7 +396,7 @@ func TestBeginTxFailureFiresAfterTransactionHook(t *testing.T) {
 	db.readPool = pool
 	db.writePool = pool
 	db.hooks = newHooks()
-	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+	db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 		hookCalled = true
 		hookErr = operationErr
 		return nil
@@ -430,7 +431,7 @@ func TestTransactionHookErrorPropagation(t *testing.T) {
 		db.readPool = pool
 		db.writePool = pool
 		db.hooks = newHooks()
-		db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 			return hookErr
 		})
 
@@ -475,7 +476,7 @@ func TestTransactionHookErrorPropagation(t *testing.T) {
 		db.readPool = pool
 		db.writePool = pool
 		db.hooks = newHooks()
-		db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+		db.hooks.addHook(AfterTransaction, func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
 			return hookErr
 		})
 

@@ -137,7 +137,7 @@ func TestGolden_FailsOnExtraQuery(t *testing.T) {
 	}
 
 	mt := &capturingT{}
-	assertGolden(mt, g2.recorder)
+	g2.assertGolden(mt, name)
 	if !mt.failed {
 		t.Errorf("expected mismatch failure for extra query")
 	}
@@ -168,62 +168,9 @@ func TestGolden_FailsOnDifferentArgs(t *testing.T) {
 	g2 := testDB.EnableGolden(name)
 	_, _ = g2.Exec(ctx, "INSERT INTO golden_diff_args (name) VALUES ($1)", "DIFFERENT")
 	mt := &capturingT{}
-	assertGolden(mt, g2.recorder)
+	g2.assertGolden(mt, name)
 	if !mt.failed {
 		t.Errorf("expected mismatch failure on differing args")
-	}
-}
-
-func TestGolden_FailsOnDifferentRow(t *testing.T) {
-	testDB := RequireDB(t)
-	if testDB == nil {
-		return
-	}
-	withGoldenSchema(t, testDB, "golden_diff_row")
-	const name = "TestGolden_FailsOnDifferentRow"
-	defer cleanupGolden(name)
-	_ = cleanupGolden(name)
-
-	ctx := context.Background()
-
-	if _, err := testDB.Exec(ctx, "INSERT INTO golden_diff_row (name) VALUES ('first')"); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-
-	g1 := testDB.EnableGolden(name)
-	rows, err := g1.Query(ctx, "SELECT name FROM golden_diff_row ORDER BY id")
-	if err != nil {
-		t.Fatalf("query: %v", err)
-	}
-	for rows.Next() {
-		var s string
-		_ = rows.Scan(&s)
-	}
-	rows.Close()
-	g1.AssertGolden(t, name)
-	if t.Failed() {
-		t.Fatalf("baseline run should pass")
-	}
-
-	if _, err := testDB.Exec(ctx, "UPDATE golden_diff_row SET name = 'changed' WHERE name = 'first'"); err != nil {
-		t.Fatalf("update: %v", err)
-	}
-
-	g2 := testDB.EnableGolden(name)
-	rows, err = g2.Query(ctx, "SELECT name FROM golden_diff_row ORDER BY id")
-	if err != nil {
-		t.Fatalf("query: %v", err)
-	}
-	for rows.Next() {
-		var s string
-		_ = rows.Scan(&s)
-	}
-	rows.Close()
-
-	mt := &capturingT{}
-	assertGolden(mt, g2.recorder)
-	if !mt.failed {
-		t.Errorf("expected mismatch on differing row")
 	}
 }
 
@@ -250,7 +197,7 @@ func TestGolden_FailsOnMissingExec(t *testing.T) {
 	g2 := testDB.EnableGolden(name)
 	_, _ = g2.Exec(ctx, "INSERT INTO golden_missing (name) VALUES ($1)", "a")
 	mt := &capturingT{}
-	assertGolden(mt, g2.recorder)
+	g2.assertGolden(mt, name)
 	if !mt.failed {
 		t.Errorf("expected mismatch on missing exec")
 	}
@@ -293,7 +240,7 @@ func TestGolden_FailsCommitToRollback(t *testing.T) {
 	}
 
 	mt := &capturingT{}
-	assertGolden(mt, g2.recorder)
+	g2.assertGolden(mt, name)
 	if !mt.failed {
 		t.Errorf("expected mismatch when COMMIT becomes ROLLBACK")
 	}
@@ -347,83 +294,43 @@ func TestGolden_TransactionPreservesOrder(t *testing.T) {
 	}
 }
 
-func TestGolden_NormalizesUUIDsTimestampsAndIDs(t *testing.T) {
-	r := newTranscriptRecorder("normalize-test")
-
+func TestGolden_NormalizesArgs(t *testing.T) {
+	n := newNormalizer()
 	now := time.Now()
 	u := uuid.MustParse("11111111-1111-1111-1111-111111111111")
 
-	r.recordQuery("SELECT 1",
-		[]any{u, now, "22222222-2222-2222-2222-222222222222"},
-		[]map[string]any{
-			r.normalizeRow([]string{"id", "user_id", "name", "created_at"},
-				[]any{int64(7), int64(7), "Alice", now}),
-			r.normalizeRow([]string{"id", "user_id", "name", "created_at"},
-				[]any{int64(8), int64(7), "Bob", now}),
-		})
-
-	if len(r.events) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(r.events))
-	}
-	ev := r.events[0]
-	if ev.Args[0] != "<UUID:1>" {
-		t.Errorf("args[0] = %v, want <UUID:1>", ev.Args[0])
-	}
-	if ev.Args[1] != "<TIMESTAMP>" {
-		t.Errorf("args[1] = %v, want <TIMESTAMP>", ev.Args[1])
-	}
-	if ev.Args[2] != "<UUID:2>" {
-		t.Errorf("args[2] = %v, want <UUID:2>", ev.Args[2])
-	}
-	if ev.Rows[0]["id"] != "<ID:1>" {
-		t.Errorf("rows[0].id = %v, want <ID:1>", ev.Rows[0]["id"])
-	}
-	if ev.Rows[0]["user_id"] != "<ID:1>" {
-		t.Errorf("rows[0].user_id = %v, want <ID:1> (same numeric value)", ev.Rows[0]["user_id"])
-	}
-	if ev.Rows[0]["name"] != "Alice" {
-		t.Errorf("rows[0].name should not be normalized: %v", ev.Rows[0]["name"])
-	}
-	if ev.Rows[0]["created_at"] != "<TIMESTAMP>" {
-		t.Errorf("rows[0].created_at = %v, want <TIMESTAMP>", ev.Rows[0]["created_at"])
-	}
-	if ev.Rows[1]["id"] != "<ID:2>" {
-		t.Errorf("rows[1].id = %v, want <ID:2>", ev.Rows[1]["id"])
-	}
-	if ev.Rows[1]["user_id"] != "<ID:1>" {
-		t.Errorf("rows[1].user_id = %v, want <ID:1>", ev.Rows[1]["user_id"])
+	args := n.normalizeArgs([]any{u, now, "22222222-2222-2222-2222-222222222222", u})
+	want := []any{"<UUID:1>", "<TIMESTAMP>", "<UUID:2>", "<UUID:1>"}
+	for i, w := range want {
+		if args[i] != w {
+			t.Errorf("args[%d] = %v, want %v", i, args[i], w)
+		}
 	}
 }
 
 func TestGolden_CustomNormalizerRunsBeforeDefaults(t *testing.T) {
-	r := newTranscriptRecorder("custom",
-		WithGoldenNormalizer(func(v any) (any, bool) {
-			if s, ok := v.(string); ok && strings.HasPrefix(s, "ord_") {
-				return "<ORDER>", true
-			}
-			return nil, false
-		}),
-		WithGoldenNormalizer(func(v any) (any, bool) {
-			if t, ok := v.(time.Time); ok {
-				_ = t
-				return "<CUSTOM-TIME>", true
-			}
-			return nil, false
-		}),
-	)
+	hook := &assertGoldenHook{normalizer: newNormalizer()}
+	WithGoldenNormalizer(func(v any) (any, bool) {
+		if s, ok := v.(string); ok && strings.HasPrefix(s, "ord_") {
+			return "<ORDER>", true
+		}
+		return nil, false
+	})(hook)
+	WithGoldenNormalizer(func(v any) (any, bool) {
+		if _, ok := v.(time.Time); ok {
+			return "<CUSTOM-TIME>", true
+		}
+		return nil, false
+	})(hook)
 
-	now := time.Now()
-	out := r.normalizer.normalize(now, "")
-	if out != "<CUSTOM-TIME>" {
-		t.Errorf("custom time normalizer should run before default: got %v", out)
+	if got := hook.normalizer.normalize(time.Now()); got != "<CUSTOM-TIME>" {
+		t.Errorf("custom time normalizer should run before default: got %v", got)
 	}
-	out = r.normalizer.normalize("ord_abc", "")
-	if out != "<ORDER>" {
-		t.Errorf("custom string normalizer should run: got %v", out)
+	if got := hook.normalizer.normalize("ord_abc"); got != "<ORDER>" {
+		t.Errorf("custom string normalizer should run: got %v", got)
 	}
-	out = r.normalizer.normalize("plain", "")
-	if out != "plain" {
-		t.Errorf("non-matching value should pass through: got %v", out)
+	if got := hook.normalizer.normalize("plain"); got != "plain" {
+		t.Errorf("non-matching value should pass through: got %v", got)
 	}
 }
 
@@ -513,19 +420,19 @@ func TestGolden_AssertWithoutEnableFails(t *testing.T) {
 	if !mt.failed {
 		t.Errorf("expected error when calling AssertGolden without EnableGolden")
 	}
-	if !strings.Contains(mt.errorMsg, "active golden recorder") {
+	if !strings.Contains(mt.errorMsg, "active golden hook") {
 		t.Errorf("unexpected message: %s", mt.errorMsg)
 	}
 }
 
 func TestGolden_NameMismatchFails(t *testing.T) {
-	db := &DB{hooks: newHooks(), recorder: newTranscriptRecorder("expected")}
+	db := &DB{hooks: newHooks(), goldenHook: &assertGoldenHook{testName: "expected", normalizer: newNormalizer()}}
 	mt := &capturingT{}
 	db.assertGolden(mt, "different")
 	if !mt.failed {
-		t.Errorf("expected error when AssertGolden name does not match recorder name")
+		t.Errorf("expected error when AssertGolden name does not match hook name")
 	}
-	if !strings.Contains(mt.errorMsg, "does not match recorder testName") {
+	if !strings.Contains(mt.errorMsg, "does not match hook testName") {
 		t.Errorf("unexpected message: %s", mt.errorMsg)
 	}
 }

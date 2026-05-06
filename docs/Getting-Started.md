@@ -136,7 +136,7 @@ Success! pgxkit is working.
 // Configure hooks when connecting
 db := pgxkit.NewDB()
 err := db.Connect(ctx, "",
-    pgxkit.WithBeforeOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+    pgxkit.WithBeforeOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
         log.Printf("Executing: %s", sql)
         return nil
     }),

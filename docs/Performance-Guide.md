@@ -442,7 +442,7 @@ func (cm *CacheManager) InvalidateUser(ctx context.Context, userID int) {
 func setupCacheInvalidationDB(cache *CacheManager) *pgxkit.DB {
     db := pgxkit.NewDB()
     err := db.Connect(context.Background(), pgxkit.GetDSN(),
-        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
             if operationErr != nil {
                 return nil // Don't invalidate on error
             }
@@ -517,7 +517,7 @@ func NewPerformanceMetrics() *PerformanceMetrics {
 func setupPerformanceMonitoringDB(metrics *PerformanceMetrics) *pgxkit.DB {
     db := pgxkit.NewDB()
     err := db.Connect(context.Background(), pgxkit.GetDSN(),
-        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, operationErr error) error {
+        pgxkit.WithAfterOperation(func(ctx context.Context, sql string, args []interface{}, tag pgconn.CommandTag, operationErr error) error {
             start, ok := ctx.Value("perf_start").(time.Time)
             if !ok {
                 return nil
