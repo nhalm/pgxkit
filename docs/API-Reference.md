@@ -828,7 +828,7 @@ func TestUserQueries(t *testing.T) {
 func (tdb *TestDB) EnableAssertPlan(testName string) *DB
 ```
 
-Enables plan-regression testing. Captures the structural query plan via `EXPLAIN (FORMAT JSON, COSTS OFF)` and asserts it is unchanged across runs. This catches plan shape changes such as seq-scan to index-scan, nested-loop to hash-join, a new sort node, or a different join order. It does NOT assert anything about query result rows. Because the captured form is plan-only (no `ANALYZE`), the underlying query is not executed during plan capture and there are no side effects to roll back.
+Enables plan-regression testing. Captures the structural query plan via `EXPLAIN (FORMAT JSON, COSTS OFF)` for each eligible query (SELECT/INSERT/UPDATE/DELETE/WITH) and accumulates them in memory. Call `AssertPlan` after the scenario to compare the captured plans against `testdata/plans/<testName>.json`. This catches plan shape changes such as seq-scan to index-scan, nested-loop to hash-join, a new sort node, or a different join order. It does NOT assert anything about query result rows. Because the captured form is plan-only (no `ANALYZE`), the underlying query is not executed during plan capture and there are no side effects to roll back.
 
 **Example:**
 ```go
@@ -850,8 +850,18 @@ func TestUserQueries(t *testing.T) {
     // DML queries are also captured. EXPLAIN without ANALYZE plans the
     // statement without executing it, so plan capture has no side effects.
     db.Exec(ctx, "UPDATE users SET last_login = NOW() WHERE id = $1", userID)
+
+    db.AssertPlan(t, "TestUserQueries")
 }
 ```
+
+### AssertPlan
+
+```go
+func (db *DB) AssertPlan(t *testing.T, testName string)
+```
+
+Compares the in-memory plans captured by `EnableAssertPlan` against `testdata/plans/<testName>.json`. On the first run (or with `go test -overwrite-plan`) it writes the baseline and logs that fact. On subsequent runs it fails the test with a unified diff if the plans have changed. `testName` must match the name passed to `EnableAssertPlan`.
 
 ### EnableGolden
 

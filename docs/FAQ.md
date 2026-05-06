@@ -282,6 +282,8 @@ func TestComplexQuery_Plan(t *testing.T) {
     `)
     require.NoError(t, err)
     defer rows.Close()
+
+    db.AssertPlan(t, "TestComplexQuery")
 }
 ```
 

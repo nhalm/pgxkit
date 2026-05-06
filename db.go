@@ -177,6 +177,7 @@ type DB struct {
 	writePool *pgxpool.Pool
 	hooks     *hooks
 	recorder  *transcriptRecorder
+	planHook  *assertPlanHook
 	mu        sync.RWMutex
 	shutdown  bool
 	activeOps sync.WaitGroup
