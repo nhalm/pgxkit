@@ -638,7 +638,7 @@ Return `(replacement, true)` to take over normalization for the value, or `(nil,
 
 ### Limitations
 
-- `golden`-recorded `pgx.Rows` materializes data once; `RawValues()` returns nil and the wrapper is not bound to a live connection (`Conn()` returns nil). `Scan` covers the common destination kinds (strings, numerics, bools, time.Time, byte slices, `*any`, types implementing `sql.Scanner`, plus a reflect-based fallback for assignable types).
+- `golden`-recorded `pgx.Rows` materializes data once; the wrapper is not bound to a live connection (`Conn()` returns nil). `Scan` decodes the captured wire bytes through the original connection's pgx `TypeMap`, so it accepts the same destination types live `Scan` does (including `uuid.UUID`, `pgtype.*`, custom `sql.Scanner`s, jsonb, and arrays). `RawValues()` returns the captured bytes for the current row.
 - Concurrent fan-out within a single scenario is out of scope — captured order would be non-deterministic.
 
 ## Testing Patterns
