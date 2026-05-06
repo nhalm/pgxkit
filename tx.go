@@ -31,6 +31,7 @@ var _ Executor = (*Tx)(nil)
 type Tx struct {
 	tx        pgx.Tx
 	db        *DB
+	recorder  *transcriptRecorder
 	finalized atomic.Bool
 }
 
@@ -40,7 +41,14 @@ func (t *Tx) Query(ctx context.Context, sql string, args ...interface{}) (pgx.Ro
 	if t.finalized.Load() {
 		return nil, ErrTxFinalized
 	}
-	return t.tx.Query(ctx, sql, args...)
+	rows, err := t.tx.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	if t.recorder != nil {
+		return captureRowsForGolden(rows, t.recorder, sql, args)
+	}
+	return rows, nil
 }
 
 // QueryRow executes a query that returns a single row within the transaction.
@@ -48,6 +56,17 @@ func (t *Tx) Query(ctx context.Context, sql string, args ...interface{}) (pgx.Ro
 func (t *Tx) QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row {
 	if t.finalized.Load() {
 		return &finalizedRow{}
+	}
+	if t.recorder != nil {
+		rows, err := t.tx.Query(ctx, sql, args...)
+		if err != nil {
+			return &shutdownRow{err: err}
+		}
+		replay, recordErr := captureRowsForGolden(rows, t.recorder, sql, args)
+		if recordErr != nil {
+			return &shutdownRow{err: recordErr}
+		}
+		return &replayRow{rows: replay}
 	}
 	return t.tx.QueryRow(ctx, sql, args...)
 }
@@ -58,7 +77,11 @@ func (t *Tx) Exec(ctx context.Context, sql string, args ...interface{}) (pgconn.
 	if t.finalized.Load() {
 		return pgconn.CommandTag{}, ErrTxFinalized
 	}
-	return t.tx.Exec(ctx, sql, args...)
+	tag, err := t.tx.Exec(ctx, sql, args...)
+	if err == nil && t.recorder != nil {
+		t.recorder.recordExec(sql, args, tag.RowsAffected())
+	}
+	return tag, err
 }
 
 // Commit commits the transaction.
@@ -72,6 +95,9 @@ func (t *Tx) Commit(ctx context.Context) error {
 	defer t.db.activeOps.Done()
 
 	err := t.tx.Commit(ctx)
+	if t.recorder != nil {
+		t.recorder.recordCommit(err)
+	}
 	hookErr := t.db.hooks.executeAfterTransaction(ctx, TxCommit, nil, err)
 	if hookErr != nil {
 		if err != nil {
@@ -93,6 +119,9 @@ func (t *Tx) Rollback(ctx context.Context) error {
 	defer t.db.activeOps.Done()
 
 	err := t.tx.Rollback(ctx)
+	if t.recorder != nil {
+		t.recorder.recordRollback(err)
+	}
 	hookErr := t.db.hooks.executeAfterTransaction(ctx, TxRollback, nil, err)
 	if hookErr != nil {
 		if err != nil {

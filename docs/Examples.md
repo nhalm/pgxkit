@@ -567,6 +567,45 @@ func TestUserQueries(t *testing.T) {
 }
 ```
 
+### Golden Transcript Tests
+
+Golden tests capture the ordered sequence of database events a scenario produces (BEGIN, every Query/Exec with normalized args and rows, COMMIT/ROLLBACK) and assert on subsequent runs that nothing changed.
+
+```go
+func TestCreateOrder(t *testing.T) {
+    ctx := context.Background()
+
+    testDB := pgxkit.NewTestDB()
+    if err := testDB.Connect(ctx, ""); err != nil {
+        t.Skip("Test database not available")
+    }
+    defer testDB.Shutdown(ctx)
+
+    golden := testDB.EnableGolden("TestCreateOrder")
+
+    tx, err := golden.BeginTx(ctx, pgx.TxOptions{})
+    require.NoError(t, err)
+
+    var orderID int
+    err = tx.QueryRow(ctx, `
+        INSERT INTO orders (total) VALUES ($1) RETURNING id
+    `, 100).Scan(&orderID)
+    require.NoError(t, err)
+
+    _, err = tx.Exec(ctx, `
+        INSERT INTO order_items (order_id, sku, qty) VALUES ($1, $2, $3)
+    `, orderID, "SKU-1", 2)
+    require.NoError(t, err)
+
+    require.NoError(t, tx.Commit(ctx))
+
+    // First run writes testdata/golden/TestCreateOrder.json.
+    // Subsequent runs diff the transcript and fail on any change.
+    // Use `go test -overwrite-golden` to refresh after intentional changes.
+    golden.AssertGolden(t, "TestCreateOrder")
+}
+```
+
 ### Test Database Helper
 
 ```go

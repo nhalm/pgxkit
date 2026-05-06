@@ -81,6 +81,69 @@ func (tdb *TestDB) Clean() error {
 	return nil
 }
 
+// EnableGolden returns a new DB instance that records every database event
+// (BEGIN, QUERY, COMMIT, ROLLBACK) the test scenario produces, including
+// SQL, normalized args, and materialized result rows. Call AssertGolden
+// after the scenario to compare the transcript against
+// testdata/golden/<testName>.json. Pass GoldenOption values (for example
+// WithGoldenNormalizer) to extend or override the default normalization.
+//
+// Example:
+//
+//	golden := testDB.EnableGolden("TestCreateOrder")
+//	// run the code under test using golden as the DB
+//	golden.AssertGolden(t, "TestCreateOrder")
+func (tdb *TestDB) EnableGolden(testName string, opts ...GoldenOption) *DB {
+	return &DB{
+		readPool:  tdb.readPool,
+		writePool: tdb.writePool,
+		hooks:     newHooks(),
+		recorder:  newTranscriptRecorder(testName, opts...),
+	}
+}
+
+// AssertGolden compares the captured transcript against
+// testdata/golden/<testName>.json. On the first run (or with -overwrite-golden)
+// it writes the baseline and logs that fact. On subsequent runs it fails the
+// test with a unified diff if the transcript has changed. testName must match
+// the name passed to EnableGolden.
+func (db *DB) AssertGolden(t *testing.T, testName string) {
+	t.Helper()
+	db.assertGolden(t, testName)
+}
+
+// assertGolden is the implementation behind AssertGolden, taking the smaller
+// goldenT interface so it can be exercised by capturing fakes in tests.
+func (db *DB) assertGolden(t goldenT, testName string) {
+	t.Helper()
+	if db.recorder == nil {
+		t.Errorf("AssertGolden called on a DB without an active golden recorder; use TestDB.EnableGolden first")
+		return
+	}
+	if db.recorder.testName != testName {
+		t.Errorf("AssertGolden testName %q does not match recorder testName %q", testName, db.recorder.testName)
+		return
+	}
+	assertGolden(t, db.recorder)
+}
+
+// cleanupGolden removes the golden transcript file for the named scenario.
+// Used internally by pgxkit's own tests so generated baselines don't pollute
+// the repo. Not part of the public API — end users should let baselines
+// persist across runs (that's the whole point of golden testing) and use
+// the -overwrite-golden flag to regenerate, or `rm` the file directly to
+// invalidate it.
+func cleanupGolden(testName string) error {
+	if testName == "" {
+		return nil
+	}
+	path := goldenPath(testName)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove golden file %s: %w", path, err)
+	}
+	return nil
+}
+
 // EnableAssertPlan returns a new DB instance configured to capture query
 // plans for plan-regression testing. For each eligible query, it issues an
 // EXPLAIN (FORMAT JSON, COSTS OFF) and records the structural plan so it
@@ -316,10 +379,13 @@ func RequireDB(t *testing.T) *TestDB {
 	return testDB
 }
 
-// CleanupPlan removes all plan-regression files for the specified test name.
-// This includes both the captured query plan file and its baseline file
-// from the testdata/plans directory.
-func CleanupPlan(testName string) error {
+// cleanupPlan removes all plan-regression files for the specified test name —
+// both the captured plan file and its baseline. Used internally by pgxkit's
+// own tests so generated baselines don't pollute the repo. Not part of the
+// public API: end users should let baselines persist (that's the whole point
+// of plan-regression testing) and remove a baseline file by hand if they
+// want to invalidate it.
+func cleanupPlan(testName string) error {
 	if testName == "" {
 		return nil
 	}

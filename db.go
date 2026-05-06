@@ -176,6 +176,7 @@ type DB struct {
 	readPool  *pgxpool.Pool
 	writePool *pgxpool.Pool
 	hooks     *hooks
+	recorder  *transcriptRecorder
 	mu        sync.RWMutex
 	shutdown  bool
 	activeOps sync.WaitGroup
@@ -616,8 +617,12 @@ func (db *DB) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (*Tx, error)
 		return nil, err
 	}
 
+	if db.recorder != nil {
+		db.recorder.recordBegin()
+	}
+
 	db.activeOps.Add(1)
-	return &Tx{tx: pgxTx, db: db}, nil
+	return &Tx{tx: pgxTx, db: db, recorder: db.recorder}, nil
 }
 
 // Shutdown gracefully shuts down the database connections.
@@ -790,6 +795,14 @@ func (db *DB) executeQuery(ctx context.Context, pool *pgxpool.Pool, sql string, 
 		}
 	}
 
+	if err == nil && db.recorder != nil && rows != nil {
+		replay, recordErr := captureRowsForGolden(rows, db.recorder, sql, args)
+		if recordErr != nil {
+			return nil, recordErr
+		}
+		return replay, nil
+	}
+
 	return rows, err
 }
 
@@ -810,6 +823,24 @@ func (db *DB) executeQueryRow(ctx context.Context, pool *pgxpool.Pool, sql strin
 
 	if err := db.hooks.executeBeforeOperation(ctx, sql, args, nil); err != nil {
 		return &shutdownRow{err: fmt.Errorf("before operation hook failed: %w", err)}
+	}
+
+	if db.recorder != nil {
+		rows, qerr := pool.Query(ctx, sql, args...)
+		if hookErr := db.hooks.executeAfterOperation(ctx, sql, args, qerr); hookErr != nil {
+			if rows != nil {
+				rows.Close()
+			}
+			return &shutdownRow{err: fmt.Errorf("after operation hook failed: %w", hookErr)}
+		}
+		if qerr != nil {
+			return &shutdownRow{err: qerr}
+		}
+		replay, recordErr := captureRowsForGolden(rows, db.recorder, sql, args)
+		if recordErr != nil {
+			return &shutdownRow{err: recordErr}
+		}
+		return &replayRow{rows: replay}
 	}
 
 	row := pool.QueryRow(ctx, sql, args...)
@@ -846,6 +877,10 @@ func (db *DB) executeExec(ctx context.Context, pool *pgxpool.Pool, sql string, a
 		if err == nil {
 			return tag, fmt.Errorf("after operation hook failed: %w", hookErr)
 		}
+	}
+
+	if err == nil && db.recorder != nil {
+		db.recorder.recordExec(sql, args, tag.RowsAffected())
 	}
 
 	return tag, err
