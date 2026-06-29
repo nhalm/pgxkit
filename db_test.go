@@ -2,6 +2,8 @@ package pgxkit
 
 import (
 	"context"
+	"errors"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -54,6 +56,68 @@ func TestConnectOptions(t *testing.T) {
 	if cfg.maxConnIdleTime != 10*time.Minute {
 		t.Errorf("WithMaxConnIdleTime: expected %v, got %v", 10*time.Minute, cfg.maxConnIdleTime)
 	}
+}
+
+func TestPoolConstructorDefault(t *testing.T) {
+	cfg := newConnectConfig()
+	if cfg.poolConstructor == nil {
+		t.Fatal("newConnectConfig should default poolConstructor to a non-nil constructor")
+	}
+}
+
+func TestWithPoolConstructor(t *testing.T) {
+	cfg := newConnectConfig()
+
+	called := false
+	custom := func(ctx context.Context, config *pgxpool.Config) (*pgxpool.Pool, error) {
+		called = true
+		return nil, nil
+	}
+	WithPoolConstructor(custom)(cfg)
+	if _, err := cfg.poolConstructor(context.Background(), nil); err != nil {
+		t.Fatalf("custom constructor returned unexpected error: %v", err)
+	}
+	if !called {
+		t.Error("WithPoolConstructor: custom constructor was not stored")
+	}
+
+	// A nil constructor must be ignored so the default is preserved.
+	before := cfg.poolConstructor
+	WithPoolConstructor(nil)(cfg)
+	if reflectFuncPtr(cfg.poolConstructor) != reflectFuncPtr(before) {
+		t.Error("WithPoolConstructor(nil): expected the existing constructor to be preserved")
+	}
+}
+
+// TestConnectUsesPoolConstructor proves Connect routes pool creation through the
+// injected constructor and hands it the prepared config (MaxConns applied),
+// without needing a live database: the constructor returns a sentinel error.
+func TestConnectUsesPoolConstructor(t *testing.T) {
+	var gotMaxConns int32
+	sentinel := errors.New("sentinel from custom constructor")
+
+	db := NewDB()
+	err := db.Connect(
+		context.Background(),
+		"postgres://user:pass@localhost:5432/db",
+		WithMaxConns(7),
+		WithPoolConstructor(func(_ context.Context, config *pgxpool.Config) (*pgxpool.Pool, error) {
+			gotMaxConns = config.MaxConns
+			return nil, sentinel
+		}),
+	)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("Connect should surface the constructor error, got: %v", err)
+	}
+	if gotMaxConns != 7 {
+		t.Errorf("custom constructor should receive the prepared config (MaxConns=7), got %d", gotMaxConns)
+	}
+}
+
+// reflectFuncPtr returns a comparable identity for a PoolConstructor so tests can
+// assert two values point at the same function (funcs are not == comparable).
+func reflectFuncPtr(fn PoolConstructor) uintptr {
+	return reflect.ValueOf(fn).Pointer()
 }
 
 func TestConnectOptionsValidation(t *testing.T) {

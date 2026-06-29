@@ -196,11 +196,13 @@ type connectConfig struct {
 	writeMaxConns   int32
 	writeMinConns   int32
 	hooks           *hooks
+	poolConstructor PoolConstructor
 }
 
 func newConnectConfig() *connectConfig {
 	return &connectConfig{
-		hooks: newHooks(),
+		hooks:           newHooks(),
+		poolConstructor: pgxpool.NewWithConfig,
 	}
 }
 
@@ -322,6 +324,37 @@ func WithOnRelease(fn func(*pgx.Conn)) ConnectOption {
 	}
 }
 
+// PoolConstructor builds a *pgxpool.Pool from a fully-prepared *pgxpool.Config.
+// It matches the signature of pgxpool.NewWithConfig, which is the default.
+type PoolConstructor func(ctx context.Context, config *pgxpool.Config) (*pgxpool.Pool, error)
+
+// WithPoolConstructor overrides how the underlying pgxpool.Pool is created.
+//
+// pgxkit prepares the *pgxpool.Config (DSN, pool sizing, and hooks) and then
+// hands it to fn instead of calling pgxpool.NewWithConfig directly. This is the
+// seam for wrapping pool creation — most usefully to attach a pgx QueryTracer
+// such as dd-trace-go's pgx integration, which has no standalone tracer
+// constructor and can only instrument a pool at construction time:
+//
+//	import ddpgx "github.com/DataDog/dd-trace-go/contrib/jackc/pgx.v5/v2"
+//
+//	db.Connect(ctx, dsn, pgxkit.WithPoolConstructor(
+//	    func(ctx context.Context, cfg *pgxpool.Config) (*pgxpool.Pool, error) {
+//	        return ddpgx.NewPoolWithConfig(ctx, cfg)
+//	    },
+//	))
+//
+// fn must build the pool from the supplied config so pgxkit's settings and
+// hooks are preserved. A nil fn is ignored (the default is kept). In
+// ConnectReadWrite, fn is invoked once per pool (read and write).
+func WithPoolConstructor(fn PoolConstructor) ConnectOption {
+	return func(c *connectConfig) {
+		if fn != nil {
+			c.poolConstructor = fn
+		}
+	}
+}
+
 // NewDB creates a new unconnected DB instance.
 // Call Connect() with options to establish the database connection.
 //
@@ -395,7 +428,7 @@ func (db *DB) Connect(ctx context.Context, dsn string, opts ...ConnectOption) er
 	db.hooks = cfg.hooks
 	db.hooks.configurePool(config)
 
-	pool, err := pgxpool.NewWithConfig(ctx, config)
+	pool, err := cfg.poolConstructor(ctx, config)
 	if err != nil {
 		return fmt.Errorf("failed to create pool: %w", err)
 	}
@@ -495,12 +528,12 @@ func (db *DB) ConnectReadWrite(ctx context.Context, readDSN, writeDSN string, op
 	db.hooks.configurePool(readConfig)
 	db.hooks.configurePool(writeConfig)
 
-	readPool, err := pgxpool.NewWithConfig(ctx, readConfig)
+	readPool, err := cfg.poolConstructor(ctx, readConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create read pool: %w", err)
 	}
 
-	writePool, err := pgxpool.NewWithConfig(ctx, writeConfig)
+	writePool, err := cfg.poolConstructor(ctx, writeConfig)
 	if err != nil {
 		readPool.Close()
 		return fmt.Errorf("failed to create write pool: %w", err)
